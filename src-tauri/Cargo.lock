@@ -11,6 +11,7 @@ dependencies = [
  "native-dialog",
  "quick-xml 0.23.1",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "ssh2",

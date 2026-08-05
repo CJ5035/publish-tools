@@ -23,6 +23,7 @@ xml-doc = "0.2.0"
 regex = "1.10.5"
 quick-xml = "0.23"
 encoding_rs = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 native-dialog = "0.7.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"

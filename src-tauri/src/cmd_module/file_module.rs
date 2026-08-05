@@ -280,6 +280,37 @@ pub async fn scan_server_directories(
     Ok(result)
 }
 
+/// 健康检查：对指定 URL 发起 GET，2xx 视为健康。
+///
+/// # Arguments
+/// * `check_url` - 健康检查 URL（手动配置）
+/// * `timeout_sec` - 超时秒数
+///
+/// # Returns
+/// * `Ok("healthy")` 成功
+/// * `Err("unhealthy: ..." / "健康检查请求失败：..." / "健康检查超时时间必须大于 0")` 失败
+#[tauri::command]
+pub async fn check_service_health(check_url: String, timeout_sec: i64) -> Result<String, String> {
+    if timeout_sec <= 0 {
+        return Err("健康检查超时时间必须大于 0".to_string());
+    }
+    let dur = std::time::Duration::from_secs(timeout_sec as u64);
+    let client = reqwest::Client::builder()
+        .timeout(dur)
+        .build()
+        .map_err(|e| format!("构建 HTTP 客户端失败：{}", e))?;
+    let resp = client
+        .get(&check_url)
+        .send()
+        .await
+        .map_err(|e| format!("健康检查请求失败：{}", e))?;
+    if resp.status().is_success() {
+        Ok("healthy".to_string())
+    } else {
+        Err(format!("unhealthy: HTTP {}", resp.status()))
+    }
+}
+
 fn validate_scan_root(root: &str) -> Result<(), String> {
     if root.is_empty() || root.chars().any(|c| c == '\r' || c == '\n' || c == ';' || c == '`' || c == '$' || c == '"') {
         return Err("扫描根路径包含非法字符".to_string());
