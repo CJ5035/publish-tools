@@ -43,11 +43,11 @@ export async function uploadServerFilesWithRetry(
     let maxRetries = options?.maxRetries ?? retryArgs.retry_count;
     let intervalMs = options?.intervalMs ?? retryArgs.retry_interval_secs * 1000;
 
-    // 入口校验：maxRetries 整数 1-100；intervalMs 非负整数；非法时回退默认 100/3000ms，
+    // 入口校验：maxRetries 整数 1-100；intervalMs 非负整数；非法时回退默认 10/3000ms，
     // 避免 NaN、0 或负数导致死循环或异常等待
     if (!Number.isInteger(maxRetries) || maxRetries < 1 || maxRetries > 100) {
-        console.warn("uploadServerFilesWithRetry: maxRetries 非法，已回退默认 100", { maxRetries });
-        maxRetries = 100;
+        console.warn("uploadServerFilesWithRetry: maxRetries 非法，已回退默认 10", { maxRetries });
+        maxRetries = 10;
     }
     if (!Number.isInteger(intervalMs) || intervalMs < 0) {
         console.warn("uploadServerFilesWithRetry: intervalMs 非法，已回退默认 3000ms", { intervalMs });
@@ -56,7 +56,7 @@ export async function uploadServerFilesWithRetry(
 
     // 发布设置加载失败/字段非法时已回退默认值，此处额外告警，不静默吞掉
     if (isSettingsLoadFailed()) {
-        console.warn("uploadServerFilesWithRetry: 发布设置加载失败，上传重试使用默认 100/3000ms");
+        console.warn("uploadServerFilesWithRetry: 发布设置加载失败，上传重试使用默认 10/3000ms");
     }
 
     const onRetry = options?.onRetry;

@@ -234,7 +234,7 @@ pub async fn scan_server_directories(
     }
 
     let list_cmd = match server_os {
-        1 => format!("powershell -NoProfile -Command \"Get-ChildItem -LiteralPath '{}' -Directory | ForEach-Object {{ $_.FullName }}\"", powershell_quote(root)),
+        1 => format!("powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; Get-ChildItem -LiteralPath '{}' -Directory | ForEach-Object {{ $_.FullName }}\"", powershell_quote(root)),
         2 => format!("find {} -maxdepth 1 -mindepth 1 -type d", shell_quote(root)),
         _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
     };
@@ -259,7 +259,7 @@ pub async fn scan_server_directories(
             // 加 `| head -1` 会让退出码取自 head 恒为 0，权限错误被静默吞成「无 binaries」，
             // 下面的降级警告分支将永不触发。-quit 需 GNU findutils，busybox 环境按约定标 blocked。
             2 => format!("find {} -maxdepth 1 -type f \\( -name '*.dll' -o -name '*.exe' -o -name '*.config' -o -name '*.json' -o -name '*.so' \\) -print -quit", shell_quote(dir)),
-            1 => format!("powershell -NoProfile -Command \"if (Get-ChildItem -LiteralPath '{}' -File | Where-Object {{ $_.Extension -in '.dll','.exe','.config','.json','.so' }} | Select-Object -First 1) {{ 'hit' }}\"", powershell_quote(dir)),
+            1 => format!("powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; if (Get-ChildItem -LiteralPath '{}' -File | Where-Object {{ $_.Extension -in '.dll','.exe','.config','.json','.so' }} | Select-Object -First 1) {{ 'hit' }}\"", powershell_quote(dir)),
             _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
         };
         // probe 单目录失败时降级（权限受限/路径消失）：将该目录 has_binaries 置 false 并记警告，

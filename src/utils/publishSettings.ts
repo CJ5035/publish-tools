@@ -7,7 +7,7 @@ const _default: RowSettingsType = {
     winServiceStopRetryInterval: 2,
     winCopyRetryCount: 3,
     winCopyRetryInterval: 2,
-    winUploadRetryCount: 100,
+    winUploadRetryCount: 10,
     winUploadRetryInterval: 3,
     updateTime: '',
 };
@@ -44,7 +44,7 @@ export async function loadPublishSettings(): Promise<RowSettingsType> {
     const okInterval = Number.isInteger(s.winUploadRetryInterval) && s.winUploadRetryInterval >= 1 && s.winUploadRetryInterval <= 60;
     if (!okCount || !okInterval) {
         loadFailed = true;
-        console.warn("上传重试字段非法，已回退默认 100/3", { count: s.winUploadRetryCount, interval: s.winUploadRetryInterval });
+        console.warn("上传重试字段非法，已回退默认 10/3", { count: s.winUploadRetryCount, interval: s.winUploadRetryInterval });
         cached = defaultSettings();
         return cached;
     }

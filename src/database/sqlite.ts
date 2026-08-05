@@ -182,7 +182,7 @@ async function ensureSchema(database: Database) {
 
     const settingsCols = await database.select<{ name: string }[]>("PRAGMA table_info(t_settings)");
     if (!settingsCols.some((c) => c.name === "win_upload_retry_count")) {
-        await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_count INTEGER DEFAULT 100");
+        await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_count INTEGER DEFAULT 10");
     }
     if (!settingsCols.some((c) => c.name === "win_upload_retry_interval")) {
         await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_interval INTEGER DEFAULT 3");
