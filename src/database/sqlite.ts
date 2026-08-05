@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { formatDate } from "@/utils/formatTime";
 
 let database: Database | null = null;
 let schemaReady = false;
@@ -108,6 +109,70 @@ async function ensureSchema(database: Database) {
         update_time TEXT
     )`);
 
+    await database.execute(`CREATE TABLE IF NOT EXISTS t_scan_config (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        exclude_patterns TEXT,
+        include_patterns TEXT,
+        exclude_system_dirs INTEGER DEFAULT 1,
+        exclude_hidden_dirs INTEGER DEFAULT 1,
+        is_global INTEGER DEFAULT 0,
+        project_id INTEGER,
+        create_time TEXT
+    )`);
+
+    await database.execute(`CREATE TABLE IF NOT EXISTS t_deploy_task (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER,
+        project_name TEXT,
+        environment INTEGER,
+        appconfig_id INTEGER,
+        run_id TEXT,
+        trigger_type TEXT,
+        status TEXT,
+        operator TEXT,
+        source TEXT,
+        selected_services TEXT,
+        start_time TEXT,
+        end_time TEXT,
+        rollback_time TEXT,
+        rollback_reason TEXT,
+        create_time TEXT
+    )`);
+
+    await database.execute(`CREATE TABLE IF NOT EXISTS t_deploy_task_detail (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER,
+        run_id TEXT,
+        service_name TEXT,
+        server_id INTEGER,
+        server_name TEXT,
+        server_identity TEXT,
+        remote_path TEXT,
+        status TEXT,
+        retry_count INTEGER DEFAULT 0,
+        health_check_result TEXT,
+        backup_path TEXT,
+        error_message TEXT,
+        step TEXT,
+        start_time TEXT,
+        end_time TEXT,
+        create_time TEXT
+    )`);
+
+    await database.execute(`CREATE TABLE IF NOT EXISTS t_health_check (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        environment INTEGER NOT NULL,
+        service_name TEXT NOT NULL,
+        server_id INTEGER NOT NULL,
+        check_url TEXT,
+        check_timeout INTEGER DEFAULT 30,
+        enabled INTEGER DEFAULT 1,
+        create_time TEXT
+    )`);
+    await database.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_t_health_check_unique ON t_health_check (project_id, environment, service_name, server_id)`);
+
     // ========== 改表（已有表加字段，先检查是否存在） ==========
     const columns = await database.select<{ name: string }[]>("PRAGMA table_info(t_app_config)");
     const hasBuildMode = columns.some((column) => column.name === "build_mode");
@@ -132,6 +197,19 @@ async function ensureSchema(database: Database) {
     if (!hasSettingsColumn("win_service_retry_interval") && !hasSettingsColumn("win_service_stop_retry_interval")) {
         await database.execute("ALTER TABLE t_settings ADD COLUMN win_service_retry_interval INTEGER DEFAULT 2");
     }
+    if (!hasSettingsColumn("win_upload_retry_count")) {
+        await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_count INTEGER DEFAULT 100");
+    }
+    if (!hasSettingsColumn("win_upload_retry_interval")) {
+        await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_interval INTEGER DEFAULT 3");
+    }
+
+    await database.execute(`INSERT INTO t_scan_config (name, exclude_patterns, include_patterns, exclude_system_dirs, exclude_hidden_dirs, is_global, project_id, create_time)
+SELECT '默认扫描规则',
+  '["bin","boot","dev","etc","lib","lib64","proc","sys","tmp","var","usr","logs","temp"]',
+  '["*.dll","*.exe","*.config","*.json","*.so"]',
+  1, 1, 1, NULL, '${formatDate(new Date(), "YYYY-mm-dd HH:MM:SS")}'
+WHERE NOT EXISTS (SELECT 1 FROM t_scan_config WHERE is_global = 1 AND name = '默认扫描规则')`);
 }
 
 // 关闭数据库连接
