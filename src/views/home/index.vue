@@ -658,6 +658,8 @@ import mittBus from "@/utils/mitt";
 import { useSettingsDb } from "@/database/settings/index";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
+import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
 
@@ -788,6 +790,8 @@ const visibleFunModule = computed(() => {
 
 // 功能模块触发
 const currModuleIndex = ref(0);
+// 阶段2：发布链路任务记录器（home 链路，手动/一键/定时手动发布共用）
+let deployRecorder: DeployRecorder | null = null;
 const onFunModuleHandle = async (index: number) => {
   // index 是 visibleFunModule 的渲染下标，反查原始下标，避免过滤后漂移
   const origIndex = state.funModule.findIndex(
@@ -996,68 +1000,91 @@ const onExecDone = () => {
 // 项目发布
 const projectPublish = async () => {
   if (!state.publishData.appconfigData.id) return false;
-  const getAppAssemblysResult = await getApplicationAssemblys();
-  if (!getAppAssemblysResult) return false;
-
-  // 发布前备份
-  if (state.publishData.appconfigData.configItems.isBackup == 1) {
-    const backupResult = await publishBeforeBackup(state.publishData.appconfigData.id);
-    if (!backupResult) return false;
-  }
-
-  await checkCanContinueHome();
-  // 发布 WebApiHost
-  const publishWebApiResult = await publishWebApiHost();
-  if (!publishWebApiResult) {
-    return false;
-  }
-  state.publishData.appconfigData.configItems.webApiHost.clientPath = "";
-
-  await checkCanContinueHome();
-  // 发布 ScheduleServer
-  const publishScheduleResult = await publishScheduleServer();
-  if (!publishScheduleResult) {
-    return false;
-  }
-  state.publishData.appconfigData.configItems.scheduleServer.clientPath = "";
-
-  await checkCanContinueHome();
-  // 发布 WpfClient
-  let publishWpfClientResult = false;
-  if (state.publishData.appconfigData.configItems.isNewVersion) {
-    publishWpfClientResult = await newPublishWpfClient();
-  } else {
-    publishWpfClientResult = await publishWpfClient();
-  }
-  if (!publishWpfClientResult) {
-    return false;
-  }
-  state.publishData.appconfigData.configItems.wpfClient.clientPath = "";
-
-  await checkCanContinueHome();
-  // 发布 SpcMonitor
-  const publishSpcMonitorResult = await publishSpcMonitor();
-  if (!publishSpcMonitorResult) {
-    return false;
-  }
-  state.publishData.appconfigData.configItems.spcMonitor.clientPath = "";
-
-  await checkCanContinueHome();
-  // 发布 WebClient
-  const publishWebClientResult = await publishWebClient();
-  if (!publishWebClientResult) {
-    return false;
-  }
-  state.publishData.appconfigData.configItems.webClient.clientPath = "";
+  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
+    (s) => (state.publishData.appconfigData.configItems as any)[s]?.clientPath
+  );
+  deployRecorder = await createDeployRecorder({
+    source: "home",
+    triggerType: isScheduledRunning.value ? "scheduled" : "manual",
+    projectId: state.publishData.projectId,
+    projectName: state.publishData.projectName,
+    environment: state.publishData.environment,
+    appconfigId: state.publishData.appconfigData.id,
+    selectedServices: serviceNames,
+  });
   try {
-    sendNotification({
-      title: "发布完成",
-      body: "SMOM项目发布完成！"
-    });
-  } catch (err) {
-    console.error("发送通知失败:", err);
+    const getAppAssemblysResult = await getApplicationAssemblys();
+    if (!getAppAssemblysResult) return false;
+
+    // 发布前备份
+    if (state.publishData.appconfigData.configItems.isBackup == 1) {
+      const backupResult = await publishBeforeBackup(state.publishData.appconfigData.id);
+      if (!backupResult) return false;
+    }
+
+    await checkCanContinueHome();
+    // 发布 WebApiHost
+    const publishWebApiResult = await publishWebApiHost();
+    if (!publishWebApiResult) {
+      return false;
+    }
+    state.publishData.appconfigData.configItems.webApiHost.clientPath = "";
+
+    await checkCanContinueHome();
+    // 发布 ScheduleServer
+    const publishScheduleResult = await publishScheduleServer();
+    if (!publishScheduleResult) {
+      return false;
+    }
+    state.publishData.appconfigData.configItems.scheduleServer.clientPath = "";
+
+    await checkCanContinueHome();
+    // 发布 WpfClient
+    const wpfClientItem = state.publishData.appconfigData.configItems.wpfClient;
+    const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
+      serverId: wpfClientItem.serverId ?? undefined,
+      serverName: wpfClientItem.serverName ?? undefined,
+      remotePath: removeSlash(wpfClientItem.serverPath || ""),
+    })) ?? null;
+    let publishWpfClientResult = false;
+    if (state.publishData.appconfigData.configItems.isNewVersion) {
+      publishWpfClientResult = await newPublishWpfClient();
+    } else {
+      publishWpfClientResult = await publishWpfClient();
+    }
+    await deployRecorder?.done(wpfDetailId, publishWpfClientResult ? "success" : "failed");
+    if (!publishWpfClientResult) {
+      return false;
+    }
+    state.publishData.appconfigData.configItems.wpfClient.clientPath = "";
+
+    await checkCanContinueHome();
+    // 发布 SpcMonitor
+    const publishSpcMonitorResult = await publishSpcMonitor();
+    if (!publishSpcMonitorResult) {
+      return false;
+    }
+    state.publishData.appconfigData.configItems.spcMonitor.clientPath = "";
+
+    await checkCanContinueHome();
+    // 发布 WebClient
+    const publishWebClientResult = await publishWebClient();
+    if (!publishWebClientResult) {
+      return false;
+    }
+    state.publishData.appconfigData.configItems.webClient.clientPath = "";
+    try {
+      sendNotification({
+        title: "发布完成",
+        body: "SMOM项目发布完成！"
+      });
+    } catch (err) {
+      console.error("发送通知失败:", err);
+    }
+    return true;
+  } finally {
+    await deployRecorder?.finish("发布未完成");
   }
-  return true;
 };
 
 // 生成发布
@@ -1354,6 +1381,13 @@ const publishScheduleServer = async () => {
         const uPwd = serverInfo.pwd;
         const serverAddress = `${serverInfo.ip}:${serverInfo.port}`;
 
+        const detailId = (await deployRecorder?.step(scheduleServerName.value, "switch", {
+          serverId: serverInfo.id ?? undefined,
+          serverName: serverInfo.name,
+          serverIdentity: serverPathVal.identity,
+          remotePath: removeSlash(serverPathVal.path),
+        })) ?? null;
+
         /* 1.关闭服务 */
         printInfoLog(`正在关闭 ${scheduleServerName.value} 服务.`);
         let closeServiceResult;
@@ -1378,13 +1412,16 @@ const publishScheduleServer = async () => {
             `未找到 ${displayOs(Number(serverInfo.os))} 部署环境，请检查.`,
             "log-error"
           );
+          await deployRecorder?.done(detailId, "failed", { errorMessage: "未找到部署环境", step: "switch" });
           return false;
         }
         if (!closeServiceResult) {
           printInfoLog(`服务 ${scheduleServerName.value} 关闭失败.`, "log-error");
+          await deployRecorder?.done(detailId, "failed", { errorMessage: "关闭服务失败", step: "switch" });
           return false;
         }
         printInfoLog(`服务 ${scheduleServerName.value} 已关闭.`, "log-success");
+        await deployRecorder?.done(detailId, "running", { step: "upload" });
 
         /* 上传文件到服务器 */
         const currLogIndex = printInfoLog(`服务 ${scheduleServerName.value} 正在发布.`);
@@ -1426,6 +1463,7 @@ const publishScheduleServer = async () => {
                   `文件上传失败，${getRetryArgs("upload").retry_interval_secs}s 后重试 (${attempt}/${maxRetries})：${error}`,
                   "log-warning"
                 );
+                deployRecorder?.done(detailId, "running", { step: "upload", retryCount: attempt });
               },
             }
           );
@@ -1434,6 +1472,7 @@ const publishScheduleServer = async () => {
               `服务 ${scheduleServerName.value} 发布失败：${uploadServerFileResult.data}.`,
               "log-error"
             );
+            await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${scheduleServerName.value} 发布失败：${uploadServerFileResult.data}`, step: "upload" });
             return false;
           }
           uploadFileNumber.currNumber++;
@@ -1448,6 +1487,7 @@ const publishScheduleServer = async () => {
           `已将 ${projectFiles.length} 个文件上传到 ${scheduleServerName.value} 服务器.`,
           "log-success"
         );
+        await deployRecorder?.done(detailId, "running", { step: "switch" });
         printInfoLog(`服务 ${scheduleServerName.value} 正在启动.`);
         let startServiceResult;
         if (serverInfo.os === 1) {
@@ -1469,9 +1509,11 @@ const publishScheduleServer = async () => {
         }
         if (!startServiceResult) {
           printInfoLog(`服务 ${scheduleServerName.value} 启动失败.`, "log-error");
+          await deployRecorder?.done(detailId, "failed", { errorMessage: "启动服务失败", step: "switch" });
           return false;
         }
         printInfoLog(`服务 ${scheduleServerName.value} 发布成功.`, "log-success");
+        await deployRecorder?.done(detailId, "success");
       }
     }
   }
@@ -2001,6 +2043,13 @@ const serverPublish = async (
       const uPwd = server.pwd;
       const serverAddress = `${server.ip}:${server.port}`;
 
+      const detailId = (await deployRecorder?.step(serverName, "switch", {
+        serverId: server.id ?? undefined,
+        serverName: server.name,
+        serverIdentity: serverPathVal.identity,
+        remotePath: removeSlash(serverPathVal.path),
+      })) ?? null;
+
       /* 1.关闭服务 */
       printInfoLog(`正在关闭 ${serverName} 服务.`);
       let closeServiceResult;
@@ -2025,13 +2074,16 @@ const serverPublish = async (
           `未找到 ${displayOs(Number(server.os))} 部署环境，请检查.`,
           "log-error"
         );
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "未找到部署环境", step: "switch" });
         return false;
       }
       if (!closeServiceResult) {
         printInfoLog(`服务 ${serverName} 关闭失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "关闭服务失败", step: "switch" });
         return false;
       }
       printInfoLog(`服务 ${serverName} 已关闭.`, "log-success");
+      await deployRecorder?.done(detailId, "running", { step: "upload" });
 
       /* 上传文件到服务器 */
       const currLogIndex = printInfoLog(`服务 ${serverName} 正在发布.`);
@@ -2069,6 +2121,7 @@ const serverPublish = async (
                 `文件上传失败，${getRetryArgs("upload").retry_interval_secs}s 后重试 (${attempt}/${maxRetries})：${error}`,
                 "log-warning"
               );
+              deployRecorder?.done(detailId, "running", { step: "upload", retryCount: attempt });
             },
           }
         );
@@ -2077,6 +2130,7 @@ const serverPublish = async (
             `服务 ${serverName} 发布失败：${uploadServerFileResult.data}.`,
             "log-error"
           );
+          await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serverName} 发布失败：${uploadServerFileResult.data}`, step: "upload" });
           return false;
         }
         uploadFileNumber.currNumber++;
@@ -2091,6 +2145,7 @@ const serverPublish = async (
         `已将 ${projectFiles.length} 个文件上传到 ${serverName}服务器.`,
         "log-success"
       );
+      await deployRecorder?.done(detailId, "running", { step: "switch" });
       printInfoLog(`服务 ${serverName} 正在启动.`);
       let startServiceResult;
       if (server.os === 1) {
@@ -2112,9 +2167,11 @@ const serverPublish = async (
       }
       if (!startServiceResult) {
         printInfoLog(`服务 ${serverName} 启动失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "启动服务失败", step: "switch" });
         return false;
       }
       printInfoLog(`服务 ${serverName} 发布成功.`, "log-success");
+      await deployRecorder?.done(detailId, "success");
     }
   }
   return true;
