@@ -22,6 +22,14 @@ use zip::{write::FileOptions, ZipWriter};
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_secs(2);
 
+/// 远程目录扫描结果
+#[derive(serde::Serialize)]
+pub struct RemoteDirectory {
+    pub path: String,
+    pub name: String,
+    pub has_binaries: bool,
+}
+
 /// 智能解码字节流：优先尝试 UTF-8，失败回退到 GBK
 ///
 /// 适配混合服务器场景：
@@ -192,6 +200,103 @@ async fn remote_command(
             Err(e)
         }
     }
+}
+
+/// 扫描远程服务器指定根目录下的一级子目录，并探测是否含可部署二进制。
+///
+/// # Arguments
+/// * `username` / `password` / `server` - SSH 凭据（与 execute_remote_command 一致）
+/// * `server_os` - 服务器系统类型：1=Windows(PowerShell)，2=Docker/Linux(find)
+/// * `scan_root` - 扫描根路径（每服务器独立）
+/// * `exclude_patterns` - 目录名排除列表（精确匹配）
+///
+/// # Returns
+/// * `Ok(Vec<RemoteDirectory>)` 成功
+/// * `Err(String)` 扫描失败（前端走"扫描失败→手动配置"分支）
+#[tauri::command]
+pub async fn scan_server_directories(
+    username: &str,
+    password: &str,
+    server: &str,
+    server_os: i64,
+    scan_root: &str,
+    exclude_patterns: Option<Vec<String>>,
+) -> Result<Vec<RemoteDirectory>, String> {
+    let root = scan_root.trim_end_matches(|c| c == '/' || c == '\\');
+    if root.is_empty() {
+        return Err("扫描根路径不能为空".to_string());
+    }
+    // 先校验路径，禁止换行、分号、命令替换和未转义空白。
+    validate_scan_root(root)?;
+    let excludes = exclude_patterns.unwrap_or_default();
+    if excludes.iter().any(|p| !is_safe_pattern(p)) {
+        return Err("排除规则包含非法字符".to_string());
+    }
+
+    let list_cmd = match server_os {
+        1 => format!("powershell -NoProfile -Command \"Get-ChildItem -LiteralPath '{}' -Directory | ForEach-Object {{ $_.FullName }}\"", powershell_quote(root)),
+        2 => format!("find {} -maxdepth 1 -mindepth 1 -type d", shell_quote(root)),
+        _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+    };
+    let output = remote_command(username, password, server, &list_cmd).await?;
+
+    let mut result: Vec<RemoteDirectory> = Vec::new();
+    for line in output.lines() {
+        let dir = line.trim();
+        if dir.is_empty() {
+            continue;
+        }
+        let name = match server_os {
+            1 => dir.rsplit(|c| c == '\\' || c == '/').next().unwrap_or("").to_string(),
+            2 => dir.rsplit('/').next().unwrap_or("").to_string(),
+            _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+        };
+        if name.is_empty() || excludes.iter().any(|p| p == &name) {
+            continue;
+        }
+        let probe = match server_os {
+            // 用 -print -quit 而非管道：remote_command 靠 exit_status != 0 判失败，
+            // 加 `| head -1` 会让退出码取自 head 恒为 0，权限错误被静默吞成「无 binaries」，
+            // 下面的降级警告分支将永不触发。-quit 需 GNU findutils，busybox 环境按约定标 blocked。
+            2 => format!("find {} -maxdepth 1 -type f \\( -name '*.dll' -o -name '*.exe' -o -name '*.config' -o -name '*.json' -o -name '*.so' \\) -print -quit", shell_quote(dir)),
+            1 => format!("powershell -NoProfile -Command \"if (Get-ChildItem -LiteralPath '{}' -File | Where-Object {{ $_.Extension -in '.dll','.exe','.config','.json','.so' }} | Select-Object -First 1) {{ 'hit' }}\"", powershell_quote(dir)),
+            _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+        };
+        // probe 单目录失败时降级（权限受限/路径消失）：将该目录 has_binaries 置 false 并记警告，
+        // 不因单目录错误中断整次扫描（只有根目录列表不可用才返回 Err）
+        let has_binaries = match remote_command(username, password, server, &probe).await {
+            Ok(o) => !o.trim().is_empty(),
+            Err(e) => {
+                eprintln!("警告：探测目录 {} 文件失败（已降级为 has_binaries=false）：{}", dir, e);
+                false
+            }
+        };
+        result.push(RemoteDirectory {
+            path: dir.to_string(),
+            name,
+            has_binaries,
+        });
+    }
+    Ok(result)
+}
+
+fn validate_scan_root(root: &str) -> Result<(), String> {
+    if root.is_empty() || root.chars().any(|c| c == '\r' || c == '\n' || c == ';' || c == '`' || c == '$' || c == '"') {
+        return Err("扫描根路径包含非法字符".to_string());
+    }
+    Ok(())
+}
+
+fn is_safe_pattern(pattern: &str) -> bool {
+    !pattern.is_empty() && !pattern.chars().any(|c| c == '\r' || c == '\n' || c == ';' || c == '`' || c == '$' || c == '"')
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn powershell_quote(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 /// 使某个 SSH 连接池中的会话失效（切换项目后调用）
