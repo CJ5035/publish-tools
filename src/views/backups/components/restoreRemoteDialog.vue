@@ -179,10 +179,13 @@ const onRestore = async () => {
 
     // 还原[WpfClient]
     if (restoreResult) {
-      const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
-        serverName: state.ruleForm.wpfClient?.serverName,
-        remotePath: removeSlash(state.ruleForm.wpfClient?.publishPath || ""),
-      })) ?? null;
+      const wpfDetailId =
+        state.ruleForm.wpfClient && !_.isEmpty(state.ruleForm.wpfClient)
+          ? ((await deployRecorder?.step("WpfClient", "upload", {
+              serverName: state.ruleForm.wpfClient?.serverName,
+              remotePath: removeSlash(state.ruleForm.wpfClient?.publishPath || ""),
+            })) ?? null)
+          : null;
       restoreResult = await restoreRemoteWpfServer(
         "WpfClient",
         state.ruleForm.wpfClient,

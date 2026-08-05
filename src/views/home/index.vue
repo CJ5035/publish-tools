@@ -1041,11 +1041,13 @@ const projectPublish = async () => {
     await checkCanContinueHome();
     // 发布 WpfClient
     const wpfClientItem = state.publishData.appconfigData.configItems.wpfClient;
-    const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
-      serverId: wpfClientItem.serverId ?? undefined,
-      serverName: wpfClientItem.serverName ?? undefined,
-      remotePath: removeSlash(wpfClientItem.serverPath || ""),
-    })) ?? null;
+    const wpfDetailId = wpfClientItem.clientPath
+      ? ((await deployRecorder?.step("WpfClient", "upload", {
+          serverId: wpfClientItem.serverId ?? undefined,
+          serverName: wpfClientItem.serverName ?? undefined,
+          remotePath: removeSlash(wpfClientItem.serverPath || ""),
+        })) ?? null)
+      : null;
     let publishWpfClientResult = false;
     if (state.publishData.appconfigData.configItems.isNewVersion) {
       publishWpfClientResult = await newPublishWpfClient();
