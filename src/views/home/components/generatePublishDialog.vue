@@ -214,6 +214,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import _ from "lodash";
 import { cmdInvoke } from "@/utils/command";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
+import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 import { aesEncrypt } from "@/utils/other";
 import { useServerDb } from "@/database/servers/index";
 import { useProjectDb } from "@/database/project/index";
@@ -265,6 +267,7 @@ const publishLocalServer = ref({
     // activeIndex: 0,
   },
 });
+let genDeployRecorder: DeployRecorder | null = null;
 const resetApplicationAssembly = ref<boolean>(true);
 const scheduleServerItems = ref<ServerOptionType[]>();
 const state = reactive<FormDialogType<RowAppconfigType>>({
@@ -605,16 +608,31 @@ const onSubmit = async () => {
   state.dialog.submitTxt = "生成中";
   // 加载发布设置缓存（供后续 copy_path 调用点 getRetryArgs 使用）
   await loadPublishSettings();
+  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
+    (s) => (state.ruleForm.configItems as any)[s]?.clientPath
+  );
+  genDeployRecorder = await createDeployRecorder({
+    source: "generate",
+    projectId: state.ruleForm.projectId ?? undefined,
+    projectName: state.ruleForm.projectName ?? undefined,
+    environment: Number(state.ruleForm.environment),
+    appconfigId: state.ruleForm.id ?? undefined,
+    selectedServices: serviceNames,
+  });
   let generateResult = false;
-  switch (publishMode.value) {
-    case 0:
-      generateResult = await generateRemotePublish();
-      break;
-    case 1:
-      generateResult = await generateLocalPublish();
-      break;
-    default:
-      break;
+  try {
+    switch (publishMode.value) {
+      case 0:
+        generateResult = await generateRemotePublish();
+        break;
+      case 1:
+        generateResult = await generateLocalPublish();
+        break;
+      default:
+        break;
+    }
+  } finally {
+    await genDeployRecorder?.finish(generateResult ? undefined : "生成失败");
   }
   emit("exec-done");
   state.dialog.submitTxt = "生 成";
@@ -648,6 +666,8 @@ const generateLocalPublish = async () => {
       outPath,
       state.ruleForm.configItems.webApiHost.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("WebApiHost", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -660,6 +680,8 @@ const generateLocalPublish = async () => {
       outPath,
       state.ruleForm.configItems.scheduleServer.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("ScheduleServer", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -672,6 +694,8 @@ const generateLocalPublish = async () => {
       outPath,
       state.ruleForm.configItems.webClient.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("WebClient", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -684,6 +708,8 @@ const generateLocalPublish = async () => {
       outPath,
       state.ruleForm.configItems.spcMonitor.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("SpcMonitor", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -696,6 +722,8 @@ const generateLocalPublish = async () => {
       state.ruleForm.configItems.wpfClient.clientPath,
       String(state.ruleForm.configItems.wpfClient.generateDirJson)
     );
+    const copyDid = await genDeployRecorder?.step("WpfClient", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
   if (!isSuccess) return false;
@@ -946,6 +974,10 @@ const generateLocalPublish = async () => {
     srcDir: rPublishDir,
     dstFile: generateZipFilePath,
   });
+  const zipDid = await genDeployRecorder?.step("SMOM", "zip");
+  await genDeployRecorder?.done(zipDid ?? null, zipResult.code === 0 ? "success" : "failed", {
+    errorMessage: zipResult.code === 0 ? undefined : String(zipResult.data),
+  });
   if (zipResult.code !== 0) {
     ElMessage.error(`压缩发布配置失败：${zipResult.data}`);
     return false;
@@ -1000,6 +1032,8 @@ const generateRemotePublish = async () => {
       outPath,
       state.ruleForm.configItems.webApiHost.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("WebApiHost", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -1012,6 +1046,8 @@ const generateRemotePublish = async () => {
       outPath,
       state.ruleForm.configItems.scheduleServer.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("ScheduleServer", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -1024,6 +1060,8 @@ const generateRemotePublish = async () => {
       outPath,
       state.ruleForm.configItems.webClient.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("WebClient", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -1036,6 +1074,8 @@ const generateRemotePublish = async () => {
       outPath,
       state.ruleForm.configItems.spcMonitor.clientPath
     );
+    const copyDid = await genDeployRecorder?.step("SpcMonitor", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
 
@@ -1048,6 +1088,8 @@ const generateRemotePublish = async () => {
       state.ruleForm.configItems.wpfClient.clientPath,
       String(state.ruleForm.configItems.wpfClient.generateDirJson)
     );
+    const copyDid = await genDeployRecorder?.step("WpfClient", "copy");
+    await genDeployRecorder?.done(copyDid ?? null, isSuccess ? "success" : "failed");
     zipFilePaths.push(outPath);
   }
   if (!isSuccess) return false;
@@ -1315,6 +1357,10 @@ const generateRemotePublish = async () => {
   const zipResult = await cmdInvoke("zip_dir", {
     srcDir: rPublishDir,
     dstFile: generateZipFilePath,
+  });
+  const zipDid = await genDeployRecorder?.step("SMOM", "zip");
+  await genDeployRecorder?.done(zipDid ?? null, zipResult.code === 0 ? "success" : "failed", {
+    errorMessage: zipResult.code === 0 ? undefined : String(zipResult.data),
   });
   if (zipResult.code !== 0) {
     ElMessage.error(`压缩发布配置失败：${zipResult.data}`);
