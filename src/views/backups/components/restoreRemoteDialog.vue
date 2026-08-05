@@ -82,6 +82,8 @@ import { path } from "@tauri-apps/api";
 import { CircleClose } from "@element-plus/icons-vue";
 import _ from "lodash";
 import { cmdInvoke } from "@/utils/command";
+import { loadPublishSettings } from "@/utils/publishSettings";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import {
   getDefaultSubObject,
   displayOs,
@@ -605,7 +607,7 @@ const restoreRemoteWpfServer = async (
 
   // 将本地 Manifest.xml 上传到服务器
   printInfoLog("正在将 Manifest.xml 上传到服务器.");
-  const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+  const uploadManifestFileResult = await uploadServerFilesWithRetry({
     localPaths: [localManifestFile],
     remotePaths: [remoteManifestFile],
     username,

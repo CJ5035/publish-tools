@@ -128,6 +128,7 @@ export default {
 		oneClickPublishTip: '開啟後顯示一鍵發布按鈕與定時發布中的一鍵發布選項',
 		winServiceRetry: 'Windows 服務啟停重試',
 		winCopyRetry: 'Windows 複製重試',
+		winUploadRetry: '上傳重試',
 		retryCount: '重試次數',
 		retryInterval: '重試間隔（秒）',
 		save: '保 存',

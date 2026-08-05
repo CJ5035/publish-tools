@@ -128,6 +128,7 @@ export default {
 		oneClickPublishTip: 'Show one-click publish button and its scheduled option when enabled',
 		winServiceRetry: 'Windows Service Start/Stop Retry',
 		winCopyRetry: 'Windows Copy Retry',
+		winUploadRetry: 'Upload Retry',
 		retryCount: 'Retry Count',
 		retryInterval: 'Retry Interval (sec)',
 		save: 'Save',
