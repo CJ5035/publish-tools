@@ -84,6 +84,8 @@ import _ from "lodash";
 import { cmdInvoke } from "@/utils/command";
 import { loadPublishSettings } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
+import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 import {
   getDefaultSubObject,
   displayOs,
@@ -100,6 +102,9 @@ const emit = defineEmits(["refresh"]);
 
 // 引入项目管理数据库
 const restoreDb = useRestoreDb();
+
+// 阶段2：发布任务记录器（source='restore'）
+let deployRecorder: DeployRecorder | null = null;
 
 // 定义变量内容
 const logPrintInfo = ref<LogPrintType[]>([]);
@@ -135,38 +140,58 @@ const onRestore = async () => {
   printInfoLog("项目名称：" + state.ruleForm.projectName);
   printInfoLog("项目环境：" + displayEnvironment(Number(state.ruleForm.environment)));
   printInfoLog("");
+  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
+    (s) => {
+      const cfg = (state.ruleForm as any)[s];
+      return Array.isArray(cfg) ? cfg.length > 0 : !_.isEmpty(cfg);
+    }
+  );
+  deployRecorder = await createDeployRecorder({
+    source: "restore",
+    projectName: state.ruleForm.projectName,
+    environment: Number(state.ruleForm.environment),
+    selectedServices: serviceNames,
+  });
 
   // 还原结果
   let restoreResult = true;
+  try {
+    // 还原[WebApiHost]
+    restoreResult = await restoreRemoteServer("WebApiHost", state.ruleForm.webApiHost);
 
-  // 还原[WebApiHost]
-  restoreResult = await restoreRemoteServer("WebApiHost", state.ruleForm.webApiHost);
+    // 还原[ScheduleServer]
+    if (restoreResult) {
+      restoreResult = await restoreRemoteServer(
+        "ScheduleServer",
+        state.ruleForm.scheduleServer
+      );
+    }
 
-  // 还原[ScheduleServer]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteServer(
-      "ScheduleServer",
-      state.ruleForm.scheduleServer
-    );
-  }
+    // 还原[WebClient]
+    if (restoreResult) {
+      restoreResult = await restoreRemoteServer("WebClient", state.ruleForm.webClient);
+    }
 
-  // 还原[WebClient]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteServer("WebClient", state.ruleForm.webClient);
-  }
+    // 还原[SpcMonitor]
+    if (restoreResult) {
+      restoreResult = await restoreRemoteServer("SpcMonitor", state.ruleForm.spcMonitor);
+    }
 
-  // 还原[SpcMonitor]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteServer("SpcMonitor", state.ruleForm.spcMonitor);
-  }
-
-  // 还原[WpfClient]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteWpfServer(
-      "WpfClient",
-      state.ruleForm.wpfClient,
-      state.ruleForm.isNewVersion
-    );
+    // 还原[WpfClient]
+    if (restoreResult) {
+      const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
+        serverName: state.ruleForm.wpfClient?.serverName,
+        remotePath: removeSlash(state.ruleForm.wpfClient?.publishPath || ""),
+      })) ?? null;
+      restoreResult = await restoreRemoteWpfServer(
+        "WpfClient",
+        state.ruleForm.wpfClient,
+        state.ruleForm.isNewVersion
+      );
+      await deployRecorder?.done(wpfDetailId, restoreResult ? "success" : "failed");
+    }
+  } finally {
+    await deployRecorder?.finish(restoreResult ? undefined : "还原未完成");
   }
 
   printInfoLog("");
@@ -202,6 +227,11 @@ const restoreRemoteServer = async (
       const serviceIdentity = serverConfig.serverIdentity;
       const pPath = removeSlash(serverConfig.publishPath);
       const rPath = removeSlash(serverConfig.backupPath);
+      const detailId = (await deployRecorder?.step(serviceName, "switch", {
+        serverName: restoreServer.serverName,
+        serverIdentity: serviceIdentity,
+        remotePath: removeSlash(serverConfig.publishPath),
+      })) ?? null;
       let copyBackFileCommands = new Array<string>();
       let closeServiceResult = true;
       printInfoLog(`关闭 ${serviceName} 服务中...`);
@@ -241,10 +271,12 @@ const restoreRemoteServer = async (
       }
       if (!closeServiceResult) {
         printInfoLog(`服务 ${serviceName} 关闭失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "服务关闭失败", step: "switch" });
         state.dialog.submitTxt = "还 原";
         return false;
       }
       printInfoLog(`服务 ${serviceName} 已关闭.`, "log-success");
+      await deployRecorder?.done(detailId, "running", { step: "copy" });
       printInfoLog(`服务 ${serviceName} 还原中.`);
       for (let cp = 0; cp < copyBackFileCommands.length; cp++) {
         const copyCommand = copyBackFileCommands[cp];
@@ -260,6 +292,7 @@ const restoreRemoteServer = async (
             "log-error"
           );
           console.error(execRemoteCmdResult.data);
+          await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serviceName} 还原失败：${execRemoteCmdResult.data}`, step: "copy" });
           state.dialog.submitTxt = "还 原";
           return false;
         }
@@ -268,6 +301,7 @@ const restoreRemoteServer = async (
         `已成功将  ${serviceName} 服务的${copyBackFileCommands.length}个备份文件还原到部署路径.`,
         "log-success"
       );
+      await deployRecorder?.done(detailId, "running", { step: "switch" });
       printInfoLog(`服务 ${serviceName} 正在启动.`);
       let startServiceResult = true;
       if (osName === "Windows") {
@@ -289,9 +323,11 @@ const restoreRemoteServer = async (
       }
       if (!startServiceResult) {
         printInfoLog(`服务 ${serviceName} 启动失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "服务启动失败", step: "switch" });
         return false;
       }
       printInfoLog(`服务 ${serviceName} 还原成功.`, "log-success");
+      await deployRecorder?.done(detailId, "success");
       printInfoLog("");
     }
   }
