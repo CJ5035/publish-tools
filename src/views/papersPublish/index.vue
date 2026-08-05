@@ -146,6 +146,8 @@ import { cmdInvoke } from "@/utils/command";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { removeSlash, displayEnvironment, displayOs, aesDecrypt } from "@/utils/other";
+import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
 const RemotePublishItem = defineAsyncComponent(
@@ -168,6 +170,9 @@ const publishItem = ref({
   stopped: false,
   resumeResolve: null as (() => void) | null,
 });
+
+// 阶段2：发布任务记录器（papersPublish 链路）
+let deployRecorder: DeployRecorder | null = null;
 
 // 发布流程检查点
 const checkCanContinue = async () => {
@@ -300,6 +305,18 @@ const onPublish = async () => {
   onRemoveLogs();
   initLogs();
   printInfoLog("");
+  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
+    (s) => {
+      const cfg = (publishConfig as any)[s];
+      return Array.isArray(cfg) ? cfg.length > 0 : !_.isEmpty(cfg);
+    }
+  );
+  deployRecorder = await createDeployRecorder({
+    source: "papersPublish",
+    projectName: publishConfig.projectName,
+    environment: Number(publishConfig.environment),
+    selectedServices: serviceNames,
+  });
   try {
     switch (publishConfig.publishMode) {
       case 0: // 远程发布
@@ -317,6 +334,7 @@ const onPublish = async () => {
       printInfoLog("发布已停止.", "log-warning");
     }
   } finally {
+    await deployRecorder?.finish();
     publishItem.value.loading = false;
     publishItem.value.loadingText = "发布中";
     const delPapersPublishDirPath = await papersPublishDir();
@@ -647,6 +665,11 @@ const localPublishServer = async (
   // 服务发布配置信息
   for (let j = 0; j < publishServer.serverConfigs.length; j++) {
     const serverConfig = publishServer.serverConfigs[j];
+    const detailId = (await deployRecorder?.step(serverName, "switch", {
+      serverName: publishServer.serverName,
+      serverIdentity: serverConfig.serverIdentity,
+      remotePath: removeSlash(serverConfig.publishPath),
+    })) ?? null;
     /* 1.关闭服务 */
     printInfoLog(`正在关闭 ${serverName} 服务.`);
     let closeServiceResult;
@@ -662,13 +685,16 @@ const localPublishServer = async (
       );
     } else {
       printInfoLog(`未找到 ${osName} 部署环境，请检查.`, "log-error");
+      await deployRecorder?.done(detailId, "failed", { errorMessage: "未找到部署环境", step: "switch" });
       return false;
     }
     if (!closeServiceResult) {
       printInfoLog(`服务 ${serverName} 关闭失败.`, "log-error");
+      await deployRecorder?.done(detailId, "failed", { errorMessage: "关闭服务失败", step: "switch" });
       return false;
     }
     printInfoLog(`服务 ${serverName} 已关闭.`, "log-success");
+    await deployRecorder?.done(detailId, "running", { step: "copy" });
 
     /* 上传文件到服务器 */
     const currLogIndex = printInfoLog(`服务 ${serverName} 正在发布.`);
@@ -694,6 +720,7 @@ const localPublishServer = async (
           `服务 ${serverName} 发布失败：${uploadServerFileResult.data}.`,
           "log-error"
         );
+        await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serverName} 发布失败：${uploadServerFileResult.data}`, step: "copy" });
         return false;
       }
       uploadFileNumber.currNumber++;
@@ -708,6 +735,7 @@ const localPublishServer = async (
       `已将 ${serverConfig.publishFiles.length} 个文件部署到 ${serverName} 服务器.`,
       "log-success"
     );
+    await deployRecorder?.done(detailId, "running", { step: "switch" });
     printInfoLog(`服务 ${serverName} 正在启动.`);
     let startServiceResult;
     if (osName === "Windows") {
@@ -724,9 +752,11 @@ const localPublishServer = async (
 
     if (!startServiceResult) {
       printInfoLog(`服务 ${serverName} 启动失败.`, "log-error");
+      await deployRecorder?.done(detailId, "failed", { errorMessage: "启动服务失败", step: "switch" });
       return false;
     }
     printInfoLog(`服务 ${serverName} 发布成功.`, "log-success");
+    await deployRecorder?.done(detailId, "success");
   }
   printInfoLog("");
   return true;
@@ -1193,6 +1223,10 @@ const remoteServerPublish = async () => {
     remotePublishConfig.value.wpfClient &&
     !_.isEmpty(remotePublishConfig.value.wpfClient)
   ) {
+    const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
+      serverName: remotePublishConfig.value.wpfClient.serverName,
+      remotePath: removeSlash(remotePublishConfig.value.wpfClient.publishPath || ""),
+    })) ?? null;
     let publishWpfResult;
     if (remotePublishConfig.value.isNewVersion) {
       publishWpfResult = await newRemotePublishWpfServer(
@@ -1205,6 +1239,7 @@ const remoteServerPublish = async () => {
         "WpfClient"
       );
     }
+    await deployRecorder?.done(wpfDetailId, publishWpfResult ? "success" : "failed");
     if (!publishWpfResult) {
       return false;
     }
@@ -1720,6 +1755,11 @@ const remotePublishServer = async (
     // 服务发布配置信息
     for (let j = 0; j < publishServer.serverConfigs.length; j++) {
       const serverConfig = publishServer.serverConfigs[j];
+      const detailId = (await deployRecorder?.step(serverName, "switch", {
+        serverName: publishServer.serverName,
+        serverIdentity: serverConfig.serverIdentity,
+        remotePath: removeSlash(serverConfig.publishPath),
+      })) ?? null;
       /* 1.关闭服务 */
       printInfoLog(`正在关闭 ${serverName} 服务.`);
       let closeServiceResult;
@@ -1741,13 +1781,16 @@ const remotePublishServer = async (
         );
       } else {
         printInfoLog(`未找到 ${osName} 部署环境，请检查.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "未找到部署环境", step: "switch" });
         return false;
       }
       if (!closeServiceResult) {
         printInfoLog(`服务 ${serverName} 关闭失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "关闭服务失败", step: "switch" });
         return false;
       }
       printInfoLog(`服务 ${serverName} 已关闭.`, "log-success");
+      await deployRecorder?.done(detailId, "running", { step: "upload" });
 
       /* 上传文件到服务器 */
       const currLogIndex = printInfoLog(`服务 ${serverName} 正在发布.`);
@@ -1773,6 +1816,7 @@ const remotePublishServer = async (
             `服务 ${serverName} 发布失败：${uploadServerFileResult.data}.`,
             "log-error"
           );
+          await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serverName} 发布失败：${uploadServerFileResult.data}`, step: "upload" });
           return false;
         }
         uploadFileNumber.currNumber++;
@@ -1788,6 +1832,7 @@ const remotePublishServer = async (
         `已将 ${serverConfig.publishFiles.length} 个文件上传到 ${serverName} 服务器.`,
         "log-success"
       );
+      await deployRecorder?.done(detailId, "running", { step: "switch" });
       printInfoLog(`服务 ${serverName} 正在启动.`);
       let startServiceResult;
 
@@ -1810,9 +1855,11 @@ const remotePublishServer = async (
       }
       if (!startServiceResult) {
         printInfoLog(`服务 ${serverName} 启动失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "启动服务失败", step: "switch" });
         return false;
       }
       printInfoLog(`服务 ${serverName} 发布成功.`, "log-success");
+      await deployRecorder?.done(detailId, "success");
     }
   }
   printInfoLog("");
