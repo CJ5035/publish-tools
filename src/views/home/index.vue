@@ -657,6 +657,7 @@ import { sendNotification } from '@tauri-apps/plugin-notification';
 import mittBus from "@/utils/mitt";
 import { useSettingsDb } from "@/database/settings/index";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
 
@@ -1411,13 +1412,23 @@ const publishScheduleServer = async () => {
           const projectFile = projectFiles[l];
           // localFiles.push(`${localPath}/${projectFile}`);
           // remoteFiles.push(`${remotePath}/${projectFile}`);
-          const uploadServerFileResult = await uploadServerFilesWithRetry({
-            localPaths: [`${localPath}/${projectFile}`],
-            remotePaths: [`${remotePath}/${projectFile}`],
-            username: uName,
-            password: uPwd,
-            server: serverAddress,
-          });
+          const uploadServerFileResult = await uploadServerFilesWithRetry(
+            {
+              localPaths: [`${localPath}/${projectFile}`],
+              remotePaths: [`${remotePath}/${projectFile}`],
+              username: uName,
+              password: uPwd,
+              server: serverAddress,
+            },
+            {
+              onRetry: (attempt, maxRetries, error) => {
+                printInfoLog(
+                  `文件上传失败，${getRetryArgs("upload").retry_interval_secs}s 后重试 (${attempt}/${maxRetries})：${error}`,
+                  "log-warning"
+                );
+              },
+            }
+          );
           if (uploadServerFileResult.code !== 0) {
             printInfoLog(
               `服务 ${scheduleServerName.value} 发布失败：${uploadServerFileResult.data}.`,
@@ -1628,7 +1639,7 @@ const newPublishWpfClient = async () => {
     }
 
     // 压缩成功后重新上传到服务器
-    const uploadFileResult = await cmdInvoke("upload_server_files", {
+    const uploadFileResult = await uploadServerFilesWithRetry({
       localPaths: [`${removeSlash(tempPublishDir)}/${dirName}.zip`],
       remotePaths: [`${removeSlash(serverPath)}/${dirName}.zip`],
       username: uName,
@@ -1666,7 +1677,7 @@ const newPublishWpfClient = async () => {
 
     // 将本地 Manifest.xml 上传到服务器
     const remoteManifestPath = `${removeSlash(serverPath)}/Manifest.xml`;
-    const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+    const uploadManifestFileResult = await uploadServerFilesWithRetry({
       localPaths: [localManifestFile],
       remotePaths: [remoteManifestPath],
       username: uName,
@@ -1859,7 +1870,7 @@ const publishWpfClient = async () => {
       printInfoLog(
         `正在将 Plugins.zip 文件上传到 ${serverName?.replace("服务器", "")}服务器.`
       );
-      const uploadPluginsFileResult = await cmdInvoke("upload_server_files", {
+      const uploadPluginsFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(tempPublishDir)}/Plugins.zip`],
         remotePaths: [`${removeSlash(serverPath)}/Plugins.zip`],
         username: uName,
@@ -1901,7 +1912,7 @@ const publishWpfClient = async () => {
       }
 
       // 压缩成功后重新上传到服务器
-      const uploadFileResult = await cmdInvoke("upload_server_files", {
+      const uploadFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(tempPublishDir)}/${dirName}.zip`],
         remotePaths: [`${removeSlash(serverPath)}/${dirName}.zip`],
         username: uName,
@@ -1940,7 +1951,7 @@ const publishWpfClient = async () => {
 
     // 将本地 Manifest.xml 上传到服务器
     const remoteManifestPath = `${removeSlash(serverPath)}/Manifest.xml`;
-    const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+    const uploadManifestFileResult = await uploadServerFilesWithRetry({
       localPaths: [localManifestFile],
       remotePaths: [remoteManifestPath],
       username: uName,
@@ -2044,13 +2055,23 @@ const serverPublish = async (
       for (let l = 0; l < projectFiles.length; l++) {
         await checkCanContinueHome();
         const projectFile = projectFiles[l];
-        const uploadServerFileResult = await uploadServerFilesWithRetry({
-          localPaths: [`${localPath}/${projectFile}`],
-          remotePaths: [`${remotePath}/${projectFile}`],
-          username: uName,
-          password: uPwd,
-          server: serverAddress,
-        });
+        const uploadServerFileResult = await uploadServerFilesWithRetry(
+          {
+            localPaths: [`${localPath}/${projectFile}`],
+            remotePaths: [`${remotePath}/${projectFile}`],
+            username: uName,
+            password: uPwd,
+            server: serverAddress,
+          },
+          {
+            onRetry: (attempt, maxRetries, error) => {
+              printInfoLog(
+                `文件上传失败，${getRetryArgs("upload").retry_interval_secs}s 后重试 (${attempt}/${maxRetries})：${error}`,
+                "log-warning"
+              );
+            },
+          }
+        );
         if (uploadServerFileResult.code !== 0) {
           printInfoLog(
             `服务 ${serverName} 发布失败：${uploadServerFileResult.data}.`,
@@ -2141,32 +2162,6 @@ const switchWinService = async (
     "log-warning"
   );
   return false;
-};
-
-// 上传文件到服务器（带重试）：服务停止后进程可能仍短暂持有文件句柄，
-// 导致 SCP 覆盖 dll/exe 失败；失败后等待并重试，给进程退出留出时间
-const uploadServerFilesWithRetry = async (
-  args: {
-    localPaths: string[];
-    remotePaths: string[];
-    username: string;
-    password: string;
-    server: string;
-  },
-  maxRetries = 100,
-  intervalMs = 3000
-) => {
-  let result = await cmdInvoke("upload_server_files", args);
-  for (let attempt = 1; attempt < maxRetries; attempt++) {
-    if (result.code === 0) return result;
-    printInfoLog(
-      `文件上传失败，${intervalMs / 1000}s 后重试 (${attempt}/${maxRetries})：${result.data}`,
-      "log-warning"
-    );
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    result = await cmdInvoke("upload_server_files", args);
-  }
-  return result;
 };
 
 // 切换Docker服务
@@ -3823,6 +3818,8 @@ const checkScheduledPublish = async () => {
 const executeScheduledPublish = async (schedule: RowPublishScheduleType) => {
   if (isScheduledRunning.value) return;
   isScheduledRunning.value = true;
+  // 显式刷新发布设置缓存（定时链路不依赖旧缓存，供 getRetryArgs / 共享 upload 工具使用）
+  await loadPublishSettings();
   // 重置信号量（定时发布不走 onFunModuleHandle，需独立重置）
   state.publishData.publishStopped = false;
   state.publishData.publishPaused = false;

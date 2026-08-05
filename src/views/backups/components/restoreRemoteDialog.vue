@@ -82,6 +82,8 @@ import { path } from "@tauri-apps/api";
 import { CircleClose } from "@element-plus/icons-vue";
 import _ from "lodash";
 import { cmdInvoke } from "@/utils/command";
+import { loadPublishSettings } from "@/utils/publishSettings";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import {
   getDefaultSubObject,
   displayOs,
@@ -127,6 +129,8 @@ const state = reactive<FormDialogType<BackupRemotePublishType>>({
 const onRestore = async () => {
   if (!state.ruleForm.projectName) return;
   state.dialog.submitTxt = "还原中";
+  // 加载发布设置缓存（供后续服务停止启动 调用点 getRetryArgs 使用）
+  await loadPublishSettings();
   onRemoveLogs();
   printInfoLog("项目名称：" + state.ruleForm.projectName);
   printInfoLog("项目环境：" + displayEnvironment(Number(state.ruleForm.environment)));
@@ -592,7 +596,7 @@ const restoreRemoteWpfServer = async (
 
   // 将本地 Manifest.xml 上传到服务器
   printInfoLog("正在将 Manifest.xml 上传到服务器.");
-  const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+  const uploadManifestFileResult = await uploadServerFilesWithRetry({
     localPaths: [localManifestFile],
     remotePaths: [remoteManifestFile],
     username,

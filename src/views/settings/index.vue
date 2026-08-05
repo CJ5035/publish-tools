@@ -27,6 +27,15 @@
           <el-input-number v-model="form.winCopyRetryInterval" :min="1" :max="60" :step="1" />
         </el-form-item>
 
+        <!-- 上传重试 -->
+        <el-divider content-position="left">{{ $t('message.settings.winUploadRetry') }}</el-divider>
+        <el-form-item :label="$t('message.settings.retryCount')">
+          <el-input-number v-model="form.winUploadRetryCount" :min="1" :max="100" :step="1" />
+        </el-form-item>
+        <el-form-item :label="$t('message.settings.retryInterval')">
+          <el-input-number v-model="form.winUploadRetryInterval" :min="1" :max="60" :step="1" />
+        </el-form-item>
+
         <el-form-item>
           <el-button type="primary" :loading="saving" @click="onSave">{{ $t('message.settings.save') }}</el-button>
         </el-form-item>
@@ -57,6 +66,8 @@ const validate = (): boolean => {
   if (form.winServiceStopRetryInterval < 1 || form.winServiceStopRetryInterval > 60) return false;
   if (form.winCopyRetryCount < 1 || form.winCopyRetryCount > 99) return false;
   if (form.winCopyRetryInterval < 1 || form.winCopyRetryInterval > 60) return false;
+  if (form.winUploadRetryCount < 1 || form.winUploadRetryCount > 100) return false;
+  if (form.winUploadRetryInterval < 1 || form.winUploadRetryInterval > 60) return false;
   return true;
 };
 

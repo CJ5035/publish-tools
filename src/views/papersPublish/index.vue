@@ -144,6 +144,7 @@ import { CircleClose } from "@element-plus/icons-vue";
 import { Promotion, VideoPause, VideoPlay, Close } from "@element-plus/icons-vue";
 import { cmdInvoke } from "@/utils/command";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { removeSlash, displayEnvironment, displayOs, aesDecrypt } from "@/utils/other";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
@@ -1349,7 +1350,7 @@ const newRemotePublishWpfServer = async (
       printInfoLog(
         `正在将 ${dirName}.zip 文件上传到 ${serverName.replace("服务器", "")} 服务器.`
       );
-      const uploadPluginsFileResult = await cmdInvoke("upload_server_files", {
+      const uploadPluginsFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/Plugins.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/Plugins.zip`],
         username,
@@ -1391,7 +1392,7 @@ const newRemotePublishWpfServer = async (
       }
 
       // 压缩成功后重新上传到服务器
-      const uploadFileResult = await cmdInvoke("upload_server_files", {
+      const uploadFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/${dirName}.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/${dirName}.zip`],
         username,
@@ -1430,7 +1431,7 @@ const newRemotePublishWpfServer = async (
 
     // 将本机 Manifest.xml 上传到服务器
     const remoteManifestPath = `${removeSlash(publishServer.publishPath)}/Manifest.xml`;
-    const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+    const uploadManifestFileResult = await uploadServerFilesWithRetry({
       localPaths: [localManifestFile],
       remotePaths: [remoteManifestPath],
       username,
@@ -1592,7 +1593,7 @@ const remotePublishWpfServer = async (
       printInfoLog(
         `正在将 Plugins.zip 文件上传到 ${serverName.replace("服务器", "")} 服务器.`
       );
-      const uploadPluginsFileResult = await cmdInvoke("upload_server_files", {
+      const uploadPluginsFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/Plugins.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/Plugins.zip`],
         username,
@@ -1634,7 +1635,7 @@ const remotePublishWpfServer = async (
       }
 
       // 压缩成功后重新上传到服务器
-      const uploadFileResult = await cmdInvoke("upload_server_files", {
+      const uploadFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/${dirName}.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/${dirName}.zip`],
         username,
@@ -1673,7 +1674,7 @@ const remotePublishWpfServer = async (
 
     // 将本机 Manifest.xml 上传到服务器
     const remoteManifestPath = `${removeSlash(publishServer.publishPath)}/Manifest.xml`;
-    const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+    const uploadManifestFileResult = await uploadServerFilesWithRetry({
       localPaths: [localManifestFile],
       remotePaths: [remoteManifestPath],
       username,
@@ -1760,7 +1761,7 @@ const remotePublishServer = async (
       for (let f = 0; f < serverConfig.publishFiles.length; f++) {
         await checkCanContinue();
         const publishFile = serverConfig.publishFiles[f];
-        const uploadServerFileResult = await cmdInvoke("upload_server_files", {
+        const uploadServerFileResult = await uploadServerFilesWithRetry({
           localPaths: [`${mPublishDir}/${serverName}/${publishFile}`],
           remotePaths: [`${removeSlash(serverConfig.publishPath)}/${publishFile}`],
           username,
