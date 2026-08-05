@@ -58,12 +58,14 @@ export function useDeployTask() {
         return r.data as number;
     };
 
-    /** 更新某详情结果（成功/失败 + 可选 retryCount/health/error/backup） */
+    /** 更新某详情结果（成功/失败 + 可选 retryCount/health/error/backup/step） */
     const updateDetailStatus = async (detailId: number, status: DeployDetailStatus, extra?: {
         retryCount?: number; healthCheckResult?: string; errorMessage?: string; backupPath?: string;
+        step?: DeployDetailStep;
     }) => {
         const r = await db.updateDetail(detailId, {
             status,
+            step: extra?.step,
             retryCount: extra?.retryCount,
             healthCheckResult: extra?.healthCheckResult,
             errorMessage: extra?.errorMessage,
@@ -90,10 +92,31 @@ export function useDeployTask() {
         return status;
     };
 
+    /**
+     * 收尾：先把仍 running/pending 的详情标记为 failed，再聚合任务状态。
+     * 异常/中断路径（如 PUBLISH_STOPPED、DB 中途失败）下未收尾的详情统一落 failed，
+     * 保证 finishTask 不会被 running 详情卡住；无任何详情时任务直接置 failed 并安全返回。
+     */
+    const finishDeployRun = async (taskId: number, reason?: string) => {
+        const detailR = await db.getDetailsByTaskId(taskId);
+        if (detailR.code !== 0) throw new Error(detailR.msg || "查询任务详情失败");
+        const details = detailR.data ?? [];
+        for (const d of details) {
+            if (d.status === 'running' || d.status === 'pending') {
+                await db.updateDetail(d.id as number, { status: 'failed', errorMessage: reason });
+            }
+        }
+        if (details.length === 0) {
+            await db.updateTaskStatus(taskId, 'failed');
+            return 'failed' as DeployTaskStatus;
+        }
+        return finishTask(taskId);
+    };
+
     /** 记录回退（定时任务自动回退时调用） */
     const recordRollback = async (taskId: number, reason: string) => {
         await db.recordRollback(taskId, reason);
     };
 
-    return { createTask, appendDetail, updateDetailStatus, finishTask, recordRollback, genRunId };
+    return { createTask, appendDetail, updateDetailStatus, finishTask, finishDeployRun, recordRollback, genRunId };
 }
