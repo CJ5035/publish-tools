@@ -7,6 +7,8 @@ const _default: RowSettingsType = {
     winServiceRetryInterval: 2,
     winCopyRetryCount: 3,
     winCopyRetryInterval: 2,
+    winUploadRetryCount: 100,
+    winUploadRetryInterval: 3,
     updateTime: '',
 };
 
