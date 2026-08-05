@@ -180,7 +180,7 @@ async function ensureSchema(database: Database) {
         await database.execute("ALTER TABLE t_app_config ADD COLUMN build_mode TEXT DEFAULT 'Debug'");
     }
 
-    // ========== 改列（服务重试列名由 stop_retry 统一为 retry，老库存在旧列则逐列重命名） ==========
+<    // ========== 改列（服务重试列名由 stop_retry 统一为 retry，老库存在旧列则逐列重命名） ==========
     // 注：Rust 端 migration 未在 main.rs 注册（死代码），实际建表/改列均由本函数承担
     const settingsColumns = await database.select<{ name: string }[]>("PRAGMA table_info(t_settings)");
     const hasSettingsColumn = (name: string) => settingsColumns.some((column) => column.name === name);
@@ -198,7 +198,7 @@ async function ensureSchema(database: Database) {
         await database.execute("ALTER TABLE t_settings ADD COLUMN win_service_retry_interval INTEGER DEFAULT 2");
     }
     if (!hasSettingsColumn("win_upload_retry_count")) {
-        await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_count INTEGER DEFAULT 100");
+        await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_count INTEGER DEFAULT 10");
     }
     if (!hasSettingsColumn("win_upload_retry_interval")) {
         await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_interval INTEGER DEFAULT 3");
