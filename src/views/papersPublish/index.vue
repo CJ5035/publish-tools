@@ -1223,19 +1223,21 @@ const remoteServerPublish = async () => {
     remotePublishConfig.value.wpfClient &&
     !_.isEmpty(remotePublishConfig.value.wpfClient)
   ) {
+    const _wpf: any = remotePublishConfig.value.wpfClient;
+    const wpfObj = Array.isArray(_wpf) ? _wpf[0] : _wpf;
     const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
-      serverName: remotePublishConfig.value.wpfClient.serverName,
-      remotePath: removeSlash(remotePublishConfig.value.wpfClient.publishPath || ""),
+      serverName: wpfObj.serverName,
+      remotePath: removeSlash(wpfObj.publishPath || ""),
     })) ?? null;
     let publishWpfResult;
     if (remotePublishConfig.value.isNewVersion) {
       publishWpfResult = await newRemotePublishWpfServer(
-        remotePublishConfig.value.wpfClient,
+        wpfObj,
         "WpfClient"
       );
     } else {
       publishWpfResult = await remotePublishWpfServer(
-        remotePublishConfig.value.wpfClient,
+        wpfObj,
         "WpfClient"
       );
     }
@@ -2006,8 +2008,10 @@ const remotePublishBeforeBackup = async () => {
     remotePublishConfig.value.wpfClient &&
     !_.isEmpty(remotePublishConfig.value.wpfClient)
   ) {
+    const _wpf: any = remotePublishConfig.value.wpfClient;
+    const wpfObj = Array.isArray(_wpf) ? _wpf[0] : _wpf;
     const backupResult = await remotePublishWpfBackup(
-      remotePublishConfig.value.wpfClient,
+      wpfObj,
       currentDate,
       "WpfClient",
       remotePublishConfig.value.isNewVersion,
@@ -2019,12 +2023,16 @@ const remotePublishBeforeBackup = async () => {
     }
 
     // 备份路径
+    const _bWpf: any = bRemotePublishConfig.wpfClient;
+    const bWpfObj = Array.isArray(_bWpf) ? _bWpf[0] : _bWpf;
     const backupPath = getBackupPath(
-      bRemotePublishConfig.wpfClient.publishPath,
+      bWpfObj.publishPath,
       currentDate,
       publishConfig.backupBasePath
     );
-    bRemotePublishConfig.wpfClient.backupPath = backupPath;
+    bWpfObj.backupPath = backupPath;
+    if (Array.isArray(_bWpf)) _bWpf[0] = bWpfObj;
+    else bRemotePublishConfig.wpfClient = bWpfObj;
   }
 
   // 保存备份记录数据

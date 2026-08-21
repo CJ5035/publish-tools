@@ -9,4 +9,5 @@ declare interface RowScanConfigType {
 	isGlobal: number;           // 0/1
 	projectId?: number | null;
 	createTime?: string;
+	serviceKeywords?: string; // JSON 对象字符串 {"webApiHost":["webapi","api"],...}
 }

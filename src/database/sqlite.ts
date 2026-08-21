@@ -180,7 +180,7 @@ async function ensureSchema(database: Database) {
         await database.execute("ALTER TABLE t_app_config ADD COLUMN build_mode TEXT DEFAULT 'Debug'");
     }
 
-<    // ========== 改列（服务重试列名由 stop_retry 统一为 retry，老库存在旧列则逐列重命名） ==========
+    // ========== 改列（服务重试列名由 stop_retry 统一为 retry，老库存在旧列则逐列重命名） ==========
     // 注：Rust 端 migration 未在 main.rs 注册（死代码），实际建表/改列均由本函数承担
     const settingsColumns = await database.select<{ name: string }[]>("PRAGMA table_info(t_settings)");
     const hasSettingsColumn = (name: string) => settingsColumns.some((column) => column.name === name);

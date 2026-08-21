@@ -3,8 +3,8 @@ import { useSettingsDb } from '@/database/settings/index';
 const _default: RowSettingsType = {
     id: 1,
     oneClickPublishEnabled: 0,
-    winServiceStopRetryCount: 3,
-    winServiceStopRetryInterval: 2,
+    winServiceRetryCount: 3,
+    winServiceRetryInterval: 2,
     winCopyRetryCount: 3,
     winCopyRetryInterval: 2,
     winUploadRetryCount: 10,
@@ -54,18 +54,18 @@ export async function loadPublishSettings(): Promise<RowSettingsType> {
 
 /**
  * 同步读缓存的重试参数。调用前应已 await loadPublishSettings()。
- * group='serviceStop' → 服务关闭/启动命令；group='copy' → copy_path；group='upload' → SSH upload。
+ * group='service'/'serviceStop' → 服务关闭/启动命令；group='copy' → copy_path；group='upload' → SSH upload。
  * 注意：返回键为 snake_case（retry_count / retry_interval_secs），与现网 30 处 spread 点保持一致；
  * Tauri 命令参数键须为 camelCase，故调用方（尤其共享 upload 工具）不得直接 spread 本返回值，
  * 须显式转成 { retryCount, retryIntervalSecs } 再传 cmdInvoke（见「共享 upload 工具接口」）。
  */
-export function getRetryArgs(group: 'serviceStop' | 'copy' | 'upload'): {
+export function getRetryArgs(group: 'service' | 'serviceStop' | 'copy' | 'upload'): {
     retry_count: number;
     retry_interval_secs: number;
 } {
     const s = cached ?? defaultSettings();
-    if (group === 'serviceStop') {
-        return { retry_count: s.winServiceStopRetryCount, retry_interval_secs: s.winServiceStopRetryInterval };
+    if (group === 'service' || group === 'serviceStop') {
+        return { retry_count: s.winServiceRetryCount, retry_interval_secs: s.winServiceRetryInterval };
     }
     if (group === 'upload') {
         return { retry_count: s.winUploadRetryCount, retry_interval_secs: s.winUploadRetryInterval };
