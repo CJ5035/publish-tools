@@ -31,6 +31,11 @@
               </div>
             </template>
           </el-table-column>
+          <el-table-column label="操作" width="110">
+            <template #default="{ row }">
+              <el-button v-if="row.service==='wpfClient'" size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">深度扫描</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </el-card>
     </template>
@@ -52,7 +57,7 @@ import { ref, inject, onMounted, reactive } from 'vue';
 import { ElMessage } from 'element-plus';
 import { cmdInvoke } from '@/utils/command';
 import { useScanConfigDb } from '@/database/scanConfig';
-import { DEFAULT_SERVICE_KEYWORDS, matchServices, SERVICE_NAMES } from './wizardTypes';
+import { DEFAULT_SERVICE_KEYWORDS, matchServices, SERVICE_NAMES, deriveAnchors } from './wizardTypes';
 import type { WizardDraft, RemoteServiceVo, ServiceName, ServerScanStatus, WizardServer } from './wizardTypes';
 
 const draft = inject<WizardDraft>('wizardDraft')!;
@@ -134,6 +139,57 @@ async function scanOne(s: WizardServer){
   const { matched, candidates } = matchServices(enumerated, keywords.value);
   draft.scanResults[key] = matched;
   draft.scanCandidates[key] = candidates as any;
+  await probeWpfClient(s, key, enumerated);
+}
+
+/** wpfClient 锚点探测：从已识别服务 exec_dir/挂载推导锚点（含家目录），单次往返探测 Manifest.xml+zip。
+ *  命中：首个进 matched、其余进候选；锚点为空或未命中则保持未识别（由用户决定是否手动深度扫描）。
+ *  探测失败不影响服务器整体扫描状态（catch 静默，仅 console.warn）。 */
+async function probeWpfClient(s: WizardServer, key: string, services: RemoteServiceVo[]){
+  try{
+    const execDirs: string[] = [];
+    for(const svc of services){
+      if(svc.exec_dir) execDirs.push(svc.exec_dir);
+      for(const m of svc.mounts ?? []) if(m) execDirs.push(m);
+    }
+    const anchors = deriveAnchors(execDirs, s.os, s.account);
+    if(anchors.length>0 && !s.scanRoot?.trim()) s.scanRoot = anchors[0]; // scanRoot 自愈回写
+    if(anchors.length===0) return;
+    const r = await cmdInvoke('scan_wpf_publish_dirs', { username: s.account, password: s.pwd, server: key, serverOs: s.os, anchors, fullScan: false });
+    if(r.code!==0 || !Array.isArray(r.data)) return;
+    const hits = r.data as string[];
+    if(hits.length===0) return;
+    if(!draft.scanCandidates[key]) draft.scanCandidates[key] = {};
+    (draft.scanResults[key] as any).wpfClient = hits[0];
+    if(hits.length>1) (draft.scanCandidates[key] as any).wpfClient = hits.slice(1);
+  }catch(e){
+    console.warn('wpfClient 探测失败', key, e);
+  }
+}
+
+/** 手动深度扫描：用户点击 wpfClient 行「深度扫描」按钮触发全盘探测（Linux 剪枝+timeout，Windows robocopy）。
+ *  结果只进候选下拉，不自动拍板。禁自动调用——服务器无 wpfClient 是常态，全盘耗时 5~30s+。 */
+const deepScanning = ref<Record<string, boolean>>({});
+async function deepScanWpf(s: WizardServer){
+  const key = `${s.ip}:${s.port}`;
+  deepScanning.value[key] = true;
+  try{
+    const r = await cmdInvoke('scan_wpf_publish_dirs', { username: s.account, password: s.pwd, server: key, serverOs: s.os, anchors: [], fullScan: true });
+    if(r.code===0 && Array.isArray(r.data)){
+      const hits = r.data as string[];
+      if(hits.length===0){
+        ElMessage.info('深度扫描未发现 wpfClient 发布目录');
+        return;
+      }
+      if(!draft.scanCandidates[key]) draft.scanCandidates[key] = {};
+      (draft.scanCandidates[key] as any).wpfClient = hits;
+    }
+  }catch(e){
+    console.warn('深度扫描失败', key, e);
+    ElMessage.warning('深度扫描失败，请查看控制台日志');
+  }finally{
+    deepScanning.value[key] = false;
+  }
 }
 
 function rowsFor(srv:any){
