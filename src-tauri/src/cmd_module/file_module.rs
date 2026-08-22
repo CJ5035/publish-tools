@@ -632,6 +632,41 @@ mod wpf_scan_tests {
     }
 }
 
+/// 扫描远程服务器上的 wpfClient 发布目录（存在 Manifest.xml 且同目录含 *.zip 的目录）
+///
+/// # Arguments
+/// * `username` / `password` / `server` - SSH 凭据（与 scan_server_services 一致）
+/// * `server_os` - 服务器系统类型：1=Windows，2=Linux
+/// * `anchors` - 锚点根目录列表（锚点模式）；全盘模式下忽略
+/// * `full_scan` - true 时全盘扫描（用户手动触发的深度扫描，禁止自动调用）
+///
+/// # Returns
+/// * `Ok(Vec<String>)` 命中目录列表（已 trim 去重）；无命中返回空 Vec
+/// * `Err(String)` 扫描失败
+#[tauri::command]
+pub async fn scan_wpf_publish_dirs(
+    username: &str,
+    password: &str,
+    server: &str,
+    server_os: i64,
+    anchors: Vec<String>,
+    full_scan: bool,
+) -> Result<Vec<String>, String> {
+    if !full_scan && anchors.is_empty() {
+        return Err("锚点为空且未开启全盘扫描".to_string());
+    }
+    if anchors.iter().any(|a| a.chars().any(|c| c == '\r' || c == '\n')) {
+        return Err("锚点路径包含非法字符".to_string());
+    }
+    let cmd = match server_os {
+        1 => build_wpf_scan_cmd_windows(&anchors, full_scan),
+        2 => build_wpf_scan_cmd_linux(&anchors, full_scan),
+        _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+    };
+    let output = remote_command(username, password, server, &cmd).await?;
+    Ok(parse_wpf_dir_lines(&output))
+}
+
 /// 健康检查：对指定 URL 发起 GET，2xx 视为健康。
 ///
 /// # Arguments
