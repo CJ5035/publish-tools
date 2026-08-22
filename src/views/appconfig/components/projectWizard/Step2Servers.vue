@@ -2,7 +2,7 @@
   <div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <el-button type="primary" @click="onAdd">添加服务器</el-button>
-      <el-button @click="onImport" :disabled="!draft.project.id">从已有导入</el-button>
+      <el-button @click="onImport">从已有导入</el-button>
     </div>
     <el-table :data="draft.servers" border size="small">
       <el-table-column label="名称" width="140">
@@ -28,7 +28,7 @@
         <template #default="{ row }"><el-input v-model="row.pwd" type="password" placeholder="密码" size="small" show-password /></template>
       </el-table-column>
       <el-table-column label="扫描根路径">
-        <template #default="{ row }"><el-input v-model="row.scanRoot" placeholder="如 C:\SMOM 或 /opt/smom" size="small" /></template>
+        <template #default="{ row }"><el-input v-model="row.scanRoot" placeholder="可选：服务枚举失败时兜底目录扫描用" size="small" /></template>
       </el-table-column>
       <el-table-column label="操作" width="160">
         <template #default="{ row, $index }">
@@ -43,6 +43,7 @@
         <el-table-column type="selection" width="40" />
         <el-table-column prop="name" label="名称" />
         <el-table-column prop="ip" label="IP" />
+        <el-table-column prop="projectName" label="所属项目" />
         <el-table-column prop="port" label="端口" width="80" />
       </el-table>
       <template #footer>
@@ -79,8 +80,7 @@ async function onTest(row:WizardServer){
   else ElMessageBox.alert(String(r.data ?? r.msg), '连接失败');
 }
 async function onImport(){
-  if(!draft.project.id){ ElMessage.warning('仅已有项目可导入'); return; }
-  const r = await serverDb.getServerList({ projectId: draft.project.id, name:null, sorting:'id DESC', skipCount:0, maxResultCount:1000 } as any);
+  const r = await serverDb.getServerList({ projectId:null, name:null, sorting:'ts.id DESC', skipCount:0, maxResultCount:1000 } as any);
   importList.value = (r.data?.data ?? []) as any;
   importVisible.value = true;
 }
@@ -97,7 +97,7 @@ function onConfirmImport(){
 async function validate(): Promise<boolean>{
   if(draft.servers.length===0){ ElMessage.warning('至少需要 1 台服务器'); return false; }
   for(const r of draft.servers){
-    if(!r.name?.trim()||!r.ip?.trim()||!r.port||!r.account?.trim()||!r.pwd?.trim()||!r.scanRoot?.trim()){
+    if(!r.name?.trim()||!r.ip?.trim()||!r.port||!r.account?.trim()||!r.pwd?.trim()){
       ElMessage.warning(`服务器 [${r.name||r.ip||'未命名'}] 信息不完整`);
       return false;
     }
@@ -110,7 +110,7 @@ async function validate(): Promise<boolean>{
   // 全局 name 冲突预检
   const needCheck = draft.servers.filter(s=>s.isNew);
   if(needCheck.length>0){
-    const all = await serverDb.getServerList({ projectId:null, name:null, sorting:'id DESC', skipCount:0, maxResultCount:1000 } as any);
+    const all = await serverDb.getServerList({ projectId:null, name:null, sorting:'ts.id DESC', skipCount:0, maxResultCount:1000 } as any);
     const existingNames = new Set((all.data?.data ?? []).map((x:RowServerType)=>x.name));
     for(const s of needCheck){
       if(existingNames.has(s.name)){ ElMessage.warning(`服务器名称 [${s.name}] 已存在，请改名`); return false; }

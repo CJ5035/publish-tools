@@ -133,6 +133,7 @@ fn main() {
             file_module::read_dlls_by_name,
             file_module::invalidate_ssh_session,
             file_module::scan_server_directories,
+            file_module::scan_server_services,
             file_module::check_service_health,
             wpf_upgrade_module::upgrade_module_version,
             parse_sln_module::parse_sln_project,

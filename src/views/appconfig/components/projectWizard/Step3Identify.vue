@@ -90,6 +90,10 @@ async function doScan(){
     }catch{
       // fallback to directory scan
       try{
+        if (!s.scanRoot?.trim()) {
+          console.warn('服务枚举失败且无扫描根路径，跳过兜底目录扫描', key);
+          continue; // 注意 continue 在 for 循环内、catch 块中，跳到下一台服务器
+        }
         const cfg = await scanDb.getDefaultScanConfig();
         const excludePatterns = JSON.parse(cfg.data?.excludePatterns || '[]');
         const r2 = await cmdInvoke('scan_server_directories', { username: s.account, password: s.pwd, server: key, serverOs: s.os, scanRoot: s.scanRoot, excludePatterns });

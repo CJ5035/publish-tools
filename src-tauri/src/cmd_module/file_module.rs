@@ -280,6 +280,254 @@ pub async fn scan_server_directories(
     Ok(result)
 }
 
+/// 远程服务枚举结果
+#[derive(serde::Serialize)]
+pub struct RemoteService {
+    pub name: String,
+    pub display_name: String,
+    pub exec_dir: String,
+    pub source: String,
+    /// 容器全部挂载的宿主机路径（仅 docker 分支非空；不含 exec_dir，供前端候选切换）
+    pub mounts: Vec<String>,
+}
+
+/// 扫描远程服务器服务（Windows 服务 / Linux systemd+docker）
+///
+/// # Arguments
+/// * `username` / `password` / `server` - SSH 凭据
+/// * `server_os` - 服务器系统类型：1=Windows(PowerShell)，2=Linux
+///
+/// # Returns
+/// * `Ok(Vec<RemoteService>)` 成功
+/// * `Err(String)` 失败
+#[tauri::command]
+pub async fn scan_server_services(
+    username: &str,
+    password: &str,
+    server: &str,
+    server_os: i64,
+) -> Result<Vec<RemoteService>, String> {
+    if server_os == 1 {
+        let ps = "powershell -NoProfile -Command \"Get-CimInstance Win32_Service | Select-Object Name,DisplayName,PathName | ConvertTo-Json -Compress\"";
+        let output = remote_command(username, password, server, ps).await?;
+        parse_win32_services(&output)
+    } else if server_os == 2 {
+        scan_linux_services(username, password, server).await
+    } else {
+        Err(format!("不支持的服务器系统类型: {}", server_os))
+    }
+}
+
+fn parse_win32_services(json: &str) -> Result<Vec<RemoteService>, String> {
+    let trimmed = json.trim();
+    if trimmed.is_empty() {
+        return Ok(vec![]);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("解析服务数据失败: {}", e))?;
+    let items: Vec<&serde_json::Value> = match &value {
+        serde_json::Value::Array(arr) => arr.iter().collect(),
+        serde_json::Value::Object(_) => vec![&value],
+        serde_json::Value::Null => return Ok(vec![]),
+        _ => return Ok(vec![]),
+    };
+    let mut result = Vec::new();
+    for item in items {
+        let name = item
+            .get("Name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let display_name = item
+            .get("DisplayName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let display_name = if display_name.is_empty() {
+            name.clone()
+        } else {
+            display_name
+        };
+        let path_name = item
+            .get("PathName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if path_name.is_empty() {
+            continue;
+        }
+        let lower = path_name.to_ascii_lowercase();
+        let Some(pos) = lower.find(".exe") else {
+            continue;
+        };
+        let truncated = &path_name[..pos + 4];
+        let truncated_trimmed = truncated.trim().trim_matches('"').trim();
+        let truncated_trimmed = truncated_trimmed.trim_matches('\'').trim();
+        let Some(idx) = truncated_trimmed.rfind(|c| c == '\\' || c == '/') else {
+            continue;
+        };
+        let dir = truncated_trimmed[..idx]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim()
+            .to_string();
+        if dir.is_empty() {
+            continue;
+        }
+        result.push(RemoteService {
+            name: name.clone(),
+            display_name,
+            exec_dir: dir,
+            source: "service".to_string(),
+            mounts: vec![],
+        });
+    }
+    Ok(result)
+}
+
+async fn scan_linux_services(
+    username: &str,
+    password: &str,
+    server: &str,
+) -> Result<Vec<RemoteService>, String> {
+    let systemd_cmd = r#"systemctl list-units --type=service --all --no-pager --plain --no-legend | cut -d' ' -f1 | grep '\.service$' | while read u; do printf '%s|%s\n' "$u" "$(systemctl show "$u" -p ExecStart --value)"; done"#;
+    let docker_cmd = "docker inspect -f '{{.Name}}|{{range .Mounts}}{{.Source}}>{{.Destination}};{{end}}' $(docker ps -q)";
+    let mut results: Vec<RemoteService> = Vec::new();
+
+    match remote_command(username, password, server, systemd_cmd).await {
+        Ok(output) => {
+            for line in output.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let Some((unit, exec)) = line.split_once('|') else {
+                    continue;
+                };
+                let unit = unit.trim();
+                let exec = exec.trim();
+                if unit.is_empty() || exec.is_empty() {
+                    continue;
+                }
+                let mut path_token: Option<String> = None;
+                for token in exec.split_whitespace() {
+                    let t = token.trim();
+                    if t.is_empty() {
+                        continue;
+                    }
+                    if t.starts_with('{') || t.starts_with('}') {
+                        continue;
+                    }
+                    let cleaned = t.trim_matches(|c| c == '"' || c == '\'');
+                    if cleaned.is_empty() {
+                        continue;
+                    }
+                    if cleaned.starts_with('{') || cleaned.starts_with('}') {
+                        continue;
+                    }
+                    path_token = Some(cleaned.to_string());
+                    break;
+                }
+                let Some(pt) = path_token else {
+                    continue;
+                };
+                let pt_trim = pt.trim().trim_matches('"').trim_matches('\'').trim();
+                if pt_trim.is_empty() {
+                    continue;
+                }
+                let Some(idx) = pt_trim.rfind('/') else {
+                    continue;
+                };
+                let dir = pt_trim[..idx].trim().to_string();
+                if dir.is_empty() {
+                    continue;
+                }
+                results.push(RemoteService {
+                    name: unit.to_string(),
+                    display_name: unit.to_string(),
+                    exec_dir: dir,
+                    source: "service".to_string(),
+                    mounts: vec![],
+                });
+            }
+        }
+        Err(_) => {
+            // systemd 扫描失败仅跳过，继续尝试 docker（纯 Docker 宿主机无 systemd 时输出为空）
+        }
+    }
+
+    match remote_command(username, password, server, docker_cmd).await {
+        Ok(output) => {
+            for line in output.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let Some((name_part, mounts_part)) = line.split_once('|') else {
+                    continue;
+                };
+                let name = name_part.trim().trim_start_matches('/').trim().to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                // 解析 "source>destination;..." 为挂载对，跳过空项
+                let pairs: Vec<(String, String)> = mounts_part
+                    .split(';')
+                    .filter_map(|m| m.trim().split_once('>'))
+                    .map(|(s, d)| (s.trim().to_string(), d.trim().to_string()))
+                    .filter(|(s, _)| !s.is_empty())
+                    .collect();
+                if pairs.is_empty() {
+                    continue;
+                }
+
+                // 非应用挂载黑名单（Source/Destination 命中任一即排除；子串匹配、忽略大小写）
+                const MOUNT_BLACKLIST: &[&str] = &[
+                    "/usr/share/fonts", "/etc/localtime", "/etc/timezone",
+                    "/etc/hosts", "/etc/resolv.conf", "docker.sock", "cert", "ssl",
+                ];
+                let is_blacklisted = |s: &str, d: &str| {
+                    let sl = s.to_ascii_lowercase();
+                    let dl = d.to_ascii_lowercase();
+                    MOUNT_BLACKLIST.iter().any(|b| sl.contains(b) || dl.contains(b))
+                };
+
+                // 优选：SMOM 部署约定 —— 发布目录挂载的 Destination == "/"+容器名（实测确认，见诊断报告）
+                let name_lower = name.to_ascii_lowercase();
+                let preferred = pairs.iter().find(|(_, d)| {
+                    d.trim_end_matches('/').to_ascii_lowercase() == format!("/{}", name_lower)
+                });
+                // 兜底：黑名单过滤后第一个；全被过滤则取原始第一个（不退化）
+                let exec_dir = preferred
+                    .map(|(s, _)| s.clone())
+                    .or_else(|| pairs.iter().find(|(s, d)| !is_blacklisted(s, d)).map(|(s, _)| s.clone()))
+                    .unwrap_or_else(|| pairs[0].0.clone());
+
+                // 候选：全部 Source，去重、去已选
+                let mut mounts: Vec<String> = Vec::new();
+                for (s, _) in &pairs {
+                    if *s != exec_dir && !mounts.contains(s) {
+                        mounts.push(s.clone());
+                    }
+                }
+                results.push(RemoteService { name: name.clone(), display_name: name, exec_dir, source: "docker".to_string(), mounts });
+            }
+        }
+        Err(_) => {
+            // docker 未安装 / 无权限 / 无运行容器时静默跳过，永不返回 Err
+        }
+    }
+
+    Ok(results)
+}
+
 /// 健康检查：对指定 URL 发起 GET，2xx 视为健康。
 ///
 /// # Arguments

@@ -62,6 +62,7 @@ export interface RemoteServiceVo {
   display_name: string;
   exec_dir: string;
   source: string;
+  mounts?: string[];
 }
 
 export function createEmptyDraft(): WizardDraft {
@@ -110,7 +111,12 @@ export function matchServices(
     hits.sort((a, b) => bestKwLen(b, svc) - bestKwLen(a, svc));
     matched[svc] = hits[0].exec_dir;
     used.add(hits[0].name);
-    if (hits.length > 1) candidates[svc] = hits.slice(1).map((h) => h.exec_dir);
+    const extra = [
+      ...hits.slice(1).map((h) => h.exec_dir),
+      ...(hits[0].mounts ?? []),
+    ].filter((p) => p && p !== matched[svc]);
+    const uniq = [...new Set(extra)];
+    if (uniq.length > 0) candidates[svc] = uniq;
   }
   return { matched, candidates };
 }
