@@ -125,3 +125,55 @@ export function displayEnv(env: number): string {
   const map: Record<number, string> = { 1: 'Dev', 2: 'Uat', 3: 'Pro', 4: 'Other' };
   return map[env] ?? String(env);
 }
+
+export type ServerScanStatus = 'pending' | 'scanning' | 'done' | 'failed';
+
+const LINUX_SUBTREE_BLACKLIST = new Set([
+  'usr', 'etc', 'bin', 'sbin', 'run', 'boot', 'dev', 'proc', 'sys', 'lib', 'lib64', 'snap',
+]);
+const WIN_ANCHOR_BLACKLIST = new Set(['windows', 'program files', 'program files (x86)', 'programdata']);
+
+function normAnchorKey(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function parentDirOf(p: string): string {
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return idx < 0 ? '' : p.slice(0, idx);
+}
+
+/** 从已识别服务的 exec_dir/挂载路径推导 wpfClient 探测锚点（父目录+祖父目录）。
+ *  系统目录按一级段整体子树拒绝（如 /usr/lib/svc 的父 /usr/lib 不可为锚点）；
+ *  /var 不在子树黑名单（/var 本身被深度过滤，/var/www 等部署根保留）。 */
+export function deriveAnchors(execDirs: string[], os: number, account?: string): string[] {
+  const okAnchor = (p: string): boolean => {
+    if (!p) return false;
+    const n = normAnchorKey(p);
+    if (!n || n === '/') return false;
+    const parts = n.split('/').filter(Boolean);
+    if (parts.length < 2) return false;
+    if (parts[0].endsWith(':')) {
+      return !WIN_ANCHOR_BLACKLIST.has(parts[1]);
+    }
+    return !LINUX_SUBTREE_BLACKLIST.has(parts[0]);
+  };
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (p: string) => {
+    if (!okAnchor(p)) return;
+    const key = normAnchorKey(p);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(p);
+  };
+  for (const d of execDirs) {
+    if (!d) continue;
+    const p1 = parentDirOf(d);
+    push(p1);
+    push(parentDirOf(p1));
+  }
+  if (os === 2 && account && account.trim()) {
+    push(`/home/${account.trim()}`);
+  }
+  return out;
+}
