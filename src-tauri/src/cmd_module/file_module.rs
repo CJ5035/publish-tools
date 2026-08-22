@@ -528,6 +528,110 @@ async fn scan_linux_services(
     Ok(results)
 }
 
+/// wpfClient 发布目录探测结果行解析：trim、去空行、保序去重
+fn parse_wpf_dir_lines(output: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|x| x == l) {
+            out.push(l.to_string());
+        }
+    }
+    out
+}
+
+/// Linux 端 wpfClient 发布目录探测命令（单次往返）：
+/// 找 Manifest.xml 且同目录存在 *.zip，输出其所在目录。
+/// - 锚点模式：逐锚点 maxdepth 2；
+/// - 全盘模式：maxdepth 5 + 系统/虚拟目录/NFS prune + timeout 60；
+/// - 全模式尾部 `; true` 中和退出码（find 遇权限错误返回 1，remote_command 非 0 即判失败）。
+fn build_wpf_scan_cmd_linux(anchors: &[String], full_scan: bool) -> String {
+    const ZIP_CHECK: &str = " | while IFS= read -r m; do d=$(dirname \"$m\"); z=$(find \"$d\" -maxdepth 1 -name '*.zip' -print -quit 2>/dev/null); [ -n \"$z\" ] && printf '%s\\n' \"$d\"; done; true";
+    if full_scan {
+        format!("timeout 60 find / -maxdepth 5 \\( -path /proc -o -path /sys -o -path /run -o -path /snap -o -path /var/lib/docker -o -fstype nfs \\) -prune -o -name Manifest.xml -print 2>/dev/null{ZIP_CHECK}")
+    } else {
+        let quoted: Vec<String> = anchors.iter().map(|a| shell_quote(a)).collect();
+        format!("for p in {}; do find \"$p\" -maxdepth 2 -name Manifest.xml -print 2>/dev/null; done{ZIP_CHECK}", quoted.join(" "))
+    }
+}
+
+/// Windows 端 wpfClient 发布目录探测命令（单次往返）：
+/// - 锚点模式：Get-ChildItem -Depth 2 -Filter Manifest.xml（-Filter 快于 -Include）；
+/// - 全盘模式：robocopy /L /S /LEV:4（原生速度，避开 WinSxS/Program Files），/XD 排除系统目录；
+/// - 全模式尾部 `exit 0` 中和退出码（robocopy 退出码为位标志 0-7）；
+/// - `-ErrorAction SilentlyContinue`：全盘必撞系统目录 Access Denied，不可沿用 ErrorActionPreference=Stop 模式。
+fn build_wpf_scan_cmd_windows(anchors: &[String], full_scan: bool) -> String {
+    const ZIP_CHECK: &str = " | ForEach-Object { $dir = Split-Path -Parent $_; if (@(Get-ChildItem -Path (Join-Path $dir '*.zip') -File -ErrorAction SilentlyContinue).Count -gt 0) { $dir } }; exit 0";
+    let collect = if full_scan {
+        "foreach ($d in (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -ne $null })) { $r = '{0}:\\' -f $d.Name; $hits += robocopy $r '\\noop' Manifest.xml /L /S /LEV:4 /XD ($r + 'Windows') ($r + '$Recycle.Bin') ($r + 'Program Files') ($r + 'Program Files (x86)') ($r + 'ProgramData') /NJH /NJS /NDL /NC /NS /NP 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -like '*\\Manifest.xml' } }".to_string()
+    } else {
+        let quoted: Vec<String> = anchors
+            .iter()
+            .map(|a| format!("'{}'", powershell_quote(a)))
+            .collect();
+        format!("foreach ($r in @({})) {{ $hits += Get-ChildItem -LiteralPath $r -Recurse -Depth 2 -Filter Manifest.xml -File -ErrorAction SilentlyContinue | ForEach-Object {{ $_.FullName }} }}", quoted.join(", "))
+    };
+    format!("powershell -NoProfile -Command \"$hits = @(); {}; $hits{}\"", collect, ZIP_CHECK)
+}
+
+#[cfg(test)]
+mod wpf_scan_tests {
+    use super::*;
+
+    #[test]
+    fn linux_anchor_cmd_quotes_anchors_and_depth2() {
+        let cmd = build_wpf_scan_cmd_linux(&["/data/app".into(), "/home/u".into()], false);
+        assert!(cmd.starts_with("for p in '/data/app' '/home/u'; do find \"$p\" -maxdepth 2 -name Manifest.xml"));
+        assert!(cmd.ends_with("; true"));
+    }
+
+    #[test]
+    fn linux_anchor_cmd_escapes_single_quote() {
+        let cmd = build_wpf_scan_cmd_linux(&["/data/a'b".into()], false);
+        assert!(cmd.contains("'/data/a'\\''b'"));
+    }
+
+    #[test]
+    fn linux_full_cmd_prunes_systems_and_neutralizes_exit() {
+        let cmd = build_wpf_scan_cmd_linux(&[], true);
+        assert!(cmd.starts_with("timeout 60 find / -maxdepth 5"));
+        for p in ["/proc", "/sys", "/run", "/snap", "/var/lib/docker", "-fstype nfs"] {
+            assert!(cmd.contains(p), "missing prune: {p}");
+        }
+        assert!(cmd.ends_with("; true"));
+    }
+
+    #[test]
+    fn windows_anchor_cmd_uses_gci_depth2_and_exit0() {
+        let cmd = build_wpf_scan_cmd_windows(&["D:\\Smom".into()], false);
+        assert!(cmd.contains("@('D:\\Smom')"));
+        assert!(cmd.contains("-Recurse -Depth 2 -Filter Manifest.xml"));
+        assert!(cmd.ends_with("exit 0\""));
+    }
+
+    #[test]
+    fn windows_full_cmd_uses_robocopy_lev4_and_xd_excludes() {
+        let cmd = build_wpf_scan_cmd_windows(&[], true);
+        assert!(cmd.contains("robocopy"));
+        assert!(cmd.contains("/LEV:4"));
+        for x in ["'Windows'", "'$Recycle.Bin'", "'Program Files'", "'Program Files (x86)'", "'ProgramData'"] {
+            assert!(cmd.contains(x), "missing /XD {x}");
+        }
+        assert!(cmd.ends_with("exit 0\""));
+    }
+
+    #[test]
+    fn parse_wpf_dir_lines_trims_dedupes_drops_empty() {
+        assert_eq!(
+            parse_wpf_dir_lines("\n/data/app/WpfClient\n/data/app/WpfClient\n \nD:\\Smom\\Wpf\n"),
+            vec!["/data/app/WpfClient", "D:\\Smom\\Wpf"]
+        );
+    }
+}
+
 /// 健康检查：对指定 URL 发起 GET，2xx 视为健康。
 ///
 /// # Arguments
