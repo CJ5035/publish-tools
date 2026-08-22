@@ -4,9 +4,14 @@
       <el-button type="primary" :loading="scanning" @click="doScan">重新扫描</el-button>
       <el-button @click="keywordVisible=true">编辑关键词</el-button>
     </div>
-    <div v-if="scanning" style="color:#999;">正在枚举服务，请稍候...</div>
     <template v-for="srv in draft.servers" :key="srv.ip+':'+srv.port">
-      <el-card style="margin-bottom:12px;" :header="`${srv.name} (${srv.ip}:${srv.port})`">
+      <el-card style="margin-bottom:12px;">
+        <template #header>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span>{{ srv.name }} ({{ srv.ip }}:{{ srv.port }})</span>
+            <el-tag v-if="statusOf(srv)" :type="statusOf(srv)!.type" size="small">{{ statusOf(srv)!.label }}</el-tag>
+          </div>
+        </template>
         <el-table :data="rowsFor(srv)" border size="small">
           <el-table-column label="服务" prop="service" width="150" />
           <el-table-column label="状态" width="120">
@@ -48,11 +53,23 @@ import { ElMessage } from 'element-plus';
 import { cmdInvoke } from '@/utils/command';
 import { useScanConfigDb } from '@/database/scanConfig';
 import { DEFAULT_SERVICE_KEYWORDS, matchServices, SERVICE_NAMES } from './wizardTypes';
-import type { WizardDraft, RemoteServiceVo, ServiceName } from './wizardTypes';
+import type { WizardDraft, RemoteServiceVo, ServiceName, ServerScanStatus, WizardServer } from './wizardTypes';
 
 const draft = inject<WizardDraft>('wizardDraft')!;
 const scanDb = useScanConfigDb();
 const scanning = ref(false);
+const scanStatus = ref<Record<string, ServerScanStatus>>({});
+const SCAN_CONCURRENCY = 4;
+const STATUS_META: Record<ServerScanStatus, { label: string; type: 'info' | 'warning' | 'success' | 'danger' }> = {
+  pending: { label: '待扫描', type: 'info' },
+  scanning: { label: '扫描中', type: 'warning' },
+  done: { label: '已完成', type: 'success' },
+  failed: { label: '扫描失败', type: 'danger' },
+};
+function statusOf(srv: { ip: string; port: number }){
+  const s = scanStatus.value[`${srv.ip}:${srv.port}`];
+  return s ? STATUS_META[s] : null;
+}
 const keywordVisible = ref(false);
 const keywords = ref<Record<ServiceName,string[]>>({ ...DEFAULT_SERVICE_KEYWORDS } as any);
 const keywordEdit = reactive<Record<string,string>>({});
@@ -74,41 +91,49 @@ async function loadKeywords(){
 onMounted(async ()=>{ await loadKeywords(); if(Object.keys(draft.scanResults).length===0) doScan(); });
 
 async function doScan(){
-  scanning.value=true;
-  for(const s of draft.servers){
-    const key = `${s.ip}:${s.port}`;
-    try{
-      const r = await cmdInvoke('scan_server_services', { username: s.account, password: s.pwd, server: key, serverOs: s.os });
-      if(r.code===0 && Array.isArray(r.data) && r.data.length>0){
-        const { matched, candidates } = matchServices(r.data as RemoteServiceVo[], keywords.value);
-        draft.scanResults[key] = matched;
-        draft.scanCandidates[key] = candidates as any;
-        continue;
+  for(const s of draft.servers) scanStatus.value[`${s.ip}:${s.port}`] = 'pending';
+  scanning.value = true;
+  const queue = [...draft.servers];
+  const workers = Array.from({ length: Math.min(SCAN_CONCURRENCY, queue.length) }, () => (async () => {
+    while (queue.length > 0) {
+      const s = queue.shift()!;
+      const key = `${s.ip}:${s.port}`;
+      scanStatus.value[key] = 'scanning';
+      try {
+        await scanOne(s);
+        scanStatus.value[key] = 'done';
+      } catch {
+        scanStatus.value[key] = 'failed';
       }
-      if(r.code!==0) throw new Error(String(r.data));
-      throw new Error('服务枚举结果为空');
-    }catch{
-      // fallback to directory scan
-      try{
-        if (!s.scanRoot?.trim()) {
-          console.warn('服务枚举失败且无扫描根路径，跳过兜底目录扫描', key);
-          continue; // 注意 continue 在 for 循环内、catch 块中，跳到下一台服务器
-        }
-        const cfg = await scanDb.getDefaultScanConfig();
-        const excludePatterns = JSON.parse(cfg.data?.excludePatterns || '[]');
-        const r2 = await cmdInvoke('scan_server_directories', { username: s.account, password: s.pwd, server: key, serverOs: s.os, scanRoot: s.scanRoot, excludePatterns });
-        if(r2.code===0 && Array.isArray(r2.data)){
-          // map directory name matching
-          const dirs = r2.data as { name:string; path:string }[];
-          const fakeServices: RemoteServiceVo[] = dirs.map(d=>({ name:d.name, display_name:d.name, exec_dir:d.path, source:'service' }));
-          const { matched, candidates } = matchServices(fakeServices, keywords.value);
-          draft.scanResults[key]=matched;
-          draft.scanCandidates[key]=candidates as any;
-        }
-      }catch(e){ console.warn('fallback scan failed', key, e); }
     }
+  })());
+  await Promise.all(workers);
+  scanning.value = false;
+}
+
+/** 单台服务器扫描：主扫描失败/为空时落兜底目录扫描；两者皆败时 throw（由调用方标记 failed） */
+async function scanOne(s: WizardServer){
+  const key = `${s.ip}:${s.port}`;
+  let enumerated: RemoteServiceVo[] | null = null;
+  try{
+    const r = await cmdInvoke('scan_server_services', { username: s.account, password: s.pwd, server: key, serverOs: s.os });
+    if(r.code===0 && Array.isArray(r.data)) enumerated = r.data as RemoteServiceVo[];
+    else throw new Error(String(r.data));
+  }catch{
+    // 主扫描失败，落兜底目录扫描
   }
-  scanning.value=false;
+  if(!enumerated || enumerated.length===0){
+    if (!s.scanRoot?.trim()) throw new Error('服务枚举失败且无扫描根路径');
+    const cfg = await scanDb.getDefaultScanConfig();
+    const excludePatterns = JSON.parse(cfg.data?.excludePatterns || '[]');
+    const r2 = await cmdInvoke('scan_server_directories', { username: s.account, password: s.pwd, server: key, serverOs: s.os, scanRoot: s.scanRoot, excludePatterns });
+    if(!(r2.code===0 && Array.isArray(r2.data))) throw new Error('目录扫描失败');
+    const dirs = r2.data as { name:string; path:string }[];
+    enumerated = dirs.map(d=>({ name:d.name, display_name:d.name, exec_dir:d.path, source:'service' }));
+  }
+  const { matched, candidates } = matchServices(enumerated, keywords.value);
+  draft.scanResults[key] = matched;
+  draft.scanCandidates[key] = candidates as any;
 }
 
 function rowsFor(srv:any){
