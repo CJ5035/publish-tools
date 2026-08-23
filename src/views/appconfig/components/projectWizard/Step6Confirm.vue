@@ -23,9 +23,9 @@ import { useProjectDb } from '@/database/project';
 import { useServerDb } from '@/database/servers';
 import { useAppconfigDb } from '@/database/appconfig';
 import { useSettingsDb } from '@/database/settings/index';
-import { useTfsDb } from '@/database/teamFoundationServer';
 import type { WizardDraft } from './wizardTypes';
 import { NORMAL_SERVICES, displayEnv, mergeConfigItems } from './wizardTypes';
+import { saveTfsRecord } from '@/utils/tfsDetect';
 
 const { t } = useI18n();
 
@@ -34,7 +34,6 @@ const draft = inject<WizardDraft>('wizardDraft')!;
 const projectDb = useProjectDb();
 const serverDb = useServerDb();
 const appconfigDb = useAppconfigDb();
-const tfsDb = useTfsDb();
 // 已有配置行（仅用于提示展示；落库前 validate 内重新权威查询）
 const existingRow = ref<RowAppconfigType | null>(null);
 // 本环境本次提交模式，供 index.vue 总结页展示
@@ -146,20 +145,12 @@ async function validate(): Promise<boolean> {
         s.id = r.data; s.isNew = false;
       }
     }
-    // 2) tfs（仅首个环境执行一次：命中 serverUrl+sourcePath 复用存量，否则插新记录）
+    // 2) tfs（仅首个环境执行一次：serverUrl+sourcePath 查重复用/插入由共享工具完成）
     if (draft.tfs && !draft.tfsSaved) {
-      const name = draft.tfs.tfsName.trim();
-      if (!name) throw new Error('请返回第1步填写 TFS 名称');
-      const tr = await tfsDb.getTfsList({ tfsName: null, tfsSourcePath: null, sorting: 'id DESC', skipCount: 0, maxResultCount: 1000 });
-      if (tr.code !== 0) throw new Error(tr.msg);
-      const all = tr.data?.data ?? [];
-      const dup = all.find((x: RowTfsType) => x.tfsServerUrl === draft.tfs!.tfsServerUrl && x.tfsSourcePath === draft.tfs!.tfsSourcePath);
-      if (!dup) {
-        if (all.some((x: RowTfsType) => x.tfsName === name)) {
-          throw new Error(`TFS名称[${name}]已存在，请返回第1步修改 TFS 名称`);
-        }
-        const ir = await tfsDb.insertTfs({ id: null, tfsName: name, tfsServerUrl: draft.tfs.tfsServerUrl, tfsSourcePath: draft.tfs.tfsSourcePath, tfsLocalPath: draft.tfs.tfsLocalPath, tfvcPath: draft.tfs.tfvcPath, remark: '配置向导自动识别' } as RowTfsType);
-        if (ir.code !== 0) throw new Error(ir.msg);
+      try {
+        await saveTfsRecord(draft.tfs);
+      } catch (e: any) {
+        throw new Error(`TFS 保存失败（请返回第1步调整）：${e.message ?? e}`);
       }
       draft.tfsSaved = true;
     }
