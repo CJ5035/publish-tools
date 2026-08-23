@@ -169,7 +169,7 @@
   </div>
 </template>
 
-<script setup lang="ts" name="smomAppconfig">
+<script setup lang="ts" name="appconfig">
 import { ref, reactive, onBeforeMount, onMounted, defineAsyncComponent } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import _ from "lodash";

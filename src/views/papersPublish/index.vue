@@ -132,7 +132,7 @@
   </div>
 </template>
 
-<script setup lang="ts" name="smomPapersPublish">
+<script setup lang="ts" name="papersPublish">
 import { ref, reactive, onBeforeMount, defineAsyncComponent, nextTick } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { path } from "@tauri-apps/api";

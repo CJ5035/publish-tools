@@ -120,7 +120,7 @@
   </div>
 </template>
 
-<script setup lang="ts" name="smomProject">
+<script setup lang="ts" name="project">
 import { ref, reactive, onBeforeMount, defineAsyncComponent } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import _ from "lodash";
