@@ -88,7 +88,7 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 							isKeepAlive: true,
 							isAffix: false,
 							isIframe: false,
-							icon: 'smom-icon smom-icon-shoudongfabu'
+							icon: 'smom-icon smom-icon-xuanzefabu'
 						},
 					}
 				]

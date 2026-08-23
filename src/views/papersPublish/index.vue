@@ -237,7 +237,7 @@ const onSelectPublishFile = async () => {
   const mPublishDir = await papersPublishDir();
   let createTempPathResult = await createDir(mPublishDir);
   if (!createTempPathResult) {
-    ElMessage.error(`创建临时手动发布目录失败：${mPublishDir}`);
+    ElMessage.error(`创建临时文件发布目录失败：${mPublishDir}`);
     publishItem.value.loading = false;
     return;
   }
