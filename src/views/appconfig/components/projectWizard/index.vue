@@ -11,9 +11,7 @@
       <el-step title="项目信息" />
       <el-step title="服务器" />
       <el-step title="服务识别" />
-      <el-step title="环境选择" />
-      <el-step :title="step5Title" />
-      <el-step :title="step6Title" />
+      <el-step :title="envStepTitle" />
     </el-steps>
 
     <div v-if="isSummary">
@@ -32,13 +30,11 @@
       <Step1Project v-if="stepIndex===0" ref="s1Ref" />
       <Step2Servers v-else-if="stepIndex===1" ref="s2Ref" />
       <Step3Identify v-else-if="stepIndex===2" ref="s3Ref" />
-      <Step4EnvSelect v-else-if="stepIndex===3" ref="s4Ref" />
-      <Step5ServiceAssign v-else-if="stepIndex===4" ref="s5Ref" :current-env="currentEnv" />
-      <Step6Confirm v-else-if="stepIndex===5" ref="s6Ref" :current-env="currentEnv" />
+      <Step4EnvConfig v-else-if="stepIndex===3" ref="s4eRef" :current-env="currentEnv" @switch-env="onSwitchEnv" @submitted="onEnvSubmitted" />
 
       <div style="margin-top:20px;text-align:right;">
         <el-button @click="onPrev" :disabled="stepIndex===0">上一步</el-button>
-        <el-button type="primary" @click="onNext">{{ stepIndex===5 ? (hasNextEnv ? '下一步环境' : '提交') : '下一步' }}</el-button>
+        <el-button v-if="stepIndex!==3" type="primary" @click="onNext">下一步</el-button>
       </div>
     </template>
   </el-dialog>
@@ -54,9 +50,7 @@ import type { WizardDraft, StoredWizardDraft } from './wizardTypes';
 import Step1Project from './Step1Project.vue';
 import Step2Servers from './Step2Servers.vue';
 import Step3Identify from './Step3Identify.vue';
-import Step4EnvSelect from './Step4EnvSelect.vue';
-import Step5ServiceAssign from './Step5ServiceAssign.vue';
-import Step6Confirm from './Step6Confirm.vue';
+import Step4EnvConfig from './Step4EnvConfig.vue';
 
 const emit = defineEmits<{ (e: 'refresh'): void }>();
 const { t } = useI18n();
@@ -71,7 +65,6 @@ const draft = reactive<WizardDraft>(createEmptyDraft());
 provide('wizardDraft', draft);
 
 const currentEnv = computed(() => draft.envs[currentEnvIndex.value] ?? 1);
-const hasNextEnv = computed(() => currentEnvIndex.value < draft.envs.length - 1);
 const hasProgress = computed(() =>
   draft.servers.length > 0 ||
   Object.keys(draft.scanResults).length > 0 ||
@@ -93,18 +86,15 @@ function clearDraft() {
   try { Local.remove(DRAFT_KEY); } catch {}
 }
 
-const step5Title = computed(() => draft.envs.length ? `服务分配 (${displayEnv(currentEnv.value)})` : '服务分配');
-const step6Title = computed(() => draft.envs.length ? `确认 (${displayEnv(currentEnv.value)})` : '确认');
+const envStepTitle = computed(() => draft.envs.length ? `环境配置 (${displayEnv(currentEnv.value)})` : '环境配置');
 
 const s1Ref = ref<any>(null);
 const s2Ref = ref<any>(null);
 const s3Ref = ref<any>(null);
-const s4Ref = ref<any>(null);
-const s5Ref = ref<any>(null);
-const s6Ref = ref<any>(null);
+const s4eRef = ref<any>(null);
 
 function currentValidateRef(): any {
-  const map: Record<number, any> = { 0: s1Ref.value, 1: s2Ref.value, 2: s3Ref.value, 3: s4Ref.value, 4: s5Ref.value, 5: s6Ref.value };
+  const map: Record<number, any> = { 0: s1Ref.value, 1: s2Ref.value, 2: s3Ref.value };
   return map[stepIndex.value];
 }
 
@@ -123,7 +113,7 @@ async function open() {
         }
       );
       Object.assign(draft, stored.draft);
-      stepIndex.value = stored.stepIndex;
+      stepIndex.value = Math.min(Math.max(stored.stepIndex ?? 0, 0), 3);
       currentEnvIndex.value = stored.currentEnvIndex;
       isSummary.value = stored.isSummary;
       summaryRows.value = stored.summaryRows ?? [];
@@ -147,27 +137,7 @@ async function onNext() {
     const ok = await v.validate();
     if (!ok) return;
   }
-  // 段2循环：S6提交后要么进入下一环境S5，要么到总结
-  if (stepIndex.value === 5) {
-    // 记录本环境结果（由 Step6Confirm.validate 内落库，失败会返回 false 已拦截）
-    const mode = (s6Ref.value?.saveMode ?? 'insert') as 'insert' | 'update';
-    summaryRows.value.push({
-      env: displayEnv(currentEnv.value),
-      status: t(`message.appconfig.wizard.${mode === 'update' ? 'summaryUpdate' : 'summaryInsert'}`),
-      msg: '',
-    });
-    if (hasNextEnv.value) {
-      currentEnvIndex.value++;
-      stepIndex.value = 4;
-      persistDraft();
-      return;
-    } else {
-      isSummary.value = true;
-      persistDraft();
-      return;
-    }
-  }
-  if (stepIndex.value < 5) stepIndex.value++;
+  if (stepIndex.value < 3) stepIndex.value++;
   persistDraft();
 }
 
@@ -177,14 +147,30 @@ function onPrev() {
     persistDraft();
     return;
   }
-  if (stepIndex.value === 4 && currentEnvIndex.value > 0) {
-    // 在 S5 且不是首个环境：回退到上一环境的 S6
-    currentEnvIndex.value--;
-    stepIndex.value = 5;
-    persistDraft();
-    return;
+  if (stepIndex.value === 3) {
+    if (s4eRef.value?.handlePrev()) { persistDraft(); return; }
   }
   if (stepIndex.value > 0) stepIndex.value--;
+  persistDraft();
+}
+
+function onSwitchEnv(env: number) {
+  currentEnvIndex.value = draft.envs.indexOf(env);
+  persistDraft();
+}
+
+function onEnvSubmitted(p: { env: number; mode: 'insert' | 'update' }) {
+  summaryRows.value.push({
+    env: displayEnv(p.env),
+    status: t(`message.appconfig.wizard.${p.mode === 'update' ? 'summaryUpdate' : 'summaryInsert'}`),
+    msg: '',
+  });
+  const nxt = s4eRef.value?.nextUnsubmittedEnv();
+  if (nxt === null || nxt === undefined) {
+    isSummary.value = true;
+  } else {
+    currentEnvIndex.value = draft.envs.indexOf(nxt);
+  }
   persistDraft();
 }
 
@@ -205,7 +191,6 @@ async function onCancel() {
     visible.value = false;
   } catch (action) {
     if (action === 'cancel') { clearDraft(); visible.value = false; }
-    // 'close'（右上角 × / Esc）→ 继续编辑，不关闭向导
   }
 }
 
