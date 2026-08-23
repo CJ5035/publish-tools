@@ -27,7 +27,7 @@
       <el-form-item label="SLN 路径">
         <div style="display:flex;gap:8px;width:100%;">
           <el-input v-model="draft.project.slnPath" placeholder="请选择 .sln 文件" readonly style="flex:1;" />
-          <el-button type="primary" @click="onSelectSln">选择</el-button>
+          <el-button type="primary" @click="onSelectSln" :loading="slnParsing">选择</el-button>
         </div>
       </el-form-item>
       <el-form-item label="版本">
@@ -43,7 +43,7 @@
 
     <el-divider v-if="Object.keys(draft.project.clientPaths).length>0" />
     <div v-if="Object.keys(draft.project.clientPaths).length>0">
-      <h4>SLN 解析结果</h4>
+      <h4>SLN 解析结果 <el-tag v-if="slnParsing" size="small">解析中…</el-tag></h4>
       <el-table :data="clientPathRows" border size="small">
         <el-table-column prop="service" label="服务" width="160" />
         <el-table-column prop="path" label="ClientPath">
@@ -77,7 +77,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, computed, inject, onMounted } from 'vue';
+import { ref, computed, inject, onMounted, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { open } from '@tauri-apps/plugin-dialog';
 import { cmdInvoke } from '@/utils/command';
@@ -121,12 +121,42 @@ function onExistingProjectChange(val:number){
   draft.project.assemblyOutPath = (p as any).assemblyOutPath ?? '';
 }
 
+const slnParsing = ref(false);
+const lastParsedPath = ref('');
+const PARSE_MODULES: Array<[string, ServiceName]> = [
+  ['SIE.WebApiHost.csproj', 'webApiHost'],
+  ['SIE.ScheduleServer.csproj', 'scheduleServer'],
+  ['WebClient.csproj', 'webClient'],
+  ['WpfClient.csproj', 'wpfClient'],
+  ['SIE.SpcMonitor.csproj', 'spcMonitor'],
+];
+
 async function onSelectSln(){
   const sel = await open({ multiple:false, filters:[{ name:'解决方案文件', extensions:['sln'] }] });
   if(!sel) return;
   draft.project.slnPath = removeSlash(String(sel));
-  await detectTfs();
+  // 项 12：即选即解析与 TFS 探测并行，互不阻塞
+  await Promise.all([parseSlnNow(), detectTfs()]);
 }
+
+async function parseSlnNow(){
+  slnParsing.value = true;
+  try {
+    await Promise.all(PARSE_MODULES.map(async ([moduleName, svc]) => {
+      try {
+        const r = await cmdInvoke('parse_sln_project', { moduleName, slnFilePath: draft.project.slnPath, isNewVersion: draft.project.isNewVersion, buildMode: draft.project.buildMode });
+        if(r.code===0 && r.data) (draft.project.clientPaths as any)[svc] = r.data;
+        else delete (draft.project.clientPaths as any)[svc];
+      } catch(e) { console.warn('parse_sln_project fail', moduleName, e); delete (draft.project.clientPaths as any)[svc]; }
+    }));
+    lastParsedPath.value = draft.project.slnPath;
+  } finally { slnParsing.value = false; }
+}
+
+// isNewVersion/buildMode 是解析参数：切换后既有结果陈旧，立即重解析（项 12 失效条件）
+watch([() => draft.project.isNewVersion, () => draft.project.buildMode], () => {
+  if(draft.project.slnPath && draft.project.slnPath === lastParsedPath.value) parseSlnNow();
+});
 
 /** SLN 的 TFS 工作区自动识别（共享工具）：失败仅提示不阻塞向导 */
 async function detectTfs(){
@@ -171,24 +201,7 @@ async function validate(): Promise<boolean> {
     ElMessage.warning('SLN 文件不存在，请重新选择');
     return false;
   }
-  // SLN 解析
-  const modules: Array<[string, ServiceName]> = [
-    ['SIE.WebApiHost.csproj', 'webApiHost'],
-    ['SIE.ScheduleServer.csproj', 'scheduleServer'],
-    ['WebClient.csproj', 'webClient'],
-    ['WpfClient.csproj', 'wpfClient'],
-    ['SIE.SpcMonitor.csproj', 'spcMonitor'],
-  ];
-  for(const [moduleName, svc] of modules){
-    try{
-      const r = await cmdInvoke('parse_sln_project', { moduleName, slnFilePath: draft.project.slnPath, isNewVersion: draft.project.isNewVersion, buildMode: draft.project.buildMode });
-      if(r.code===0 && r.data){
-        (draft.project.clientPaths as any)[svc] = r.data;
-      }
-    } catch(e){
-      console.warn('parse_sln_project fail', moduleName, e);
-    }
-  }
+  if(draft.project.slnPath !== lastParsedPath.value) await parseSlnNow();
   return true;
 }
 defineExpose({ validate });
