@@ -1872,7 +1872,8 @@ const publishWpfClient = async () => {
     // 将生成的文件复制到[临时发布目录]
     const dirName = fileName.replace(".zip", "");
     if (dirName == "Plugins") {
-      // --- 扁平兜底：按文件夹独立兜底（Domain/UI 各自检查） ---
+      // --- 扁平兜底：按文件夹独立兜底（Domain/UI 各自检查），10.2+ 新版本不兜底 ---
+      const isNewVersion = Boolean(state.publishData.appconfigData.configItems.isNewVersion);
       const domainPath = `${removeSlash(wpfClientItem.clientPath)}/Domain`;
       const uiPath = `${removeSlash(wpfClientItem.clientPath)}/UI`;
       const domainExistsRes = await cmdInvoke("exists", { path: domainPath });
@@ -1883,11 +1884,11 @@ const publishWpfClient = async () => {
       const ensureFlatGroups = async () => {
         if (flatGroups) return flatGroups;
         const readRes = await cmdInvoke("read_all_dlls", { dir: removeSlash(wpfClientItem.clientPath as string) });
-        let topDlls: string[] = [];
-        if (readRes.code === 0 && readRes.data) {
-          topDlls = readRes.data as string[];
+        if (readRes.code !== 0 || !Array.isArray(readRes.data)) {
+          printInfoLog(`读取目录顶层DLL失败：${readRes.data}，无法执行扁平分选兜底.`, "log-error");
+          return null;
         }
-        flatGroups = classifyWpfDlls(topDlls);
+        flatGroups = classifyWpfDlls(readRes.data as string[]);
         return flatGroups;
       };
       // Domain
@@ -1902,10 +1903,11 @@ const publishWpfClient = async () => {
           printInfoLog(`复制文件目录 ${domainPath} 失败.`, "log-error");
           return false;
         }
-      } else {
+      } else if (!isNewVersion) {
         const groups = await ensureFlatGroups();
+        if (!groups) return false;
         printInfoLog(
-          `未检测到 Domain 文件夹，已按名称规则（含WPF→UI、含WEB→跳过、其余→Domain）从目录顶层分选 ${groups.Domain.length} 个DLL`,
+          `未检测到 Domain 文件夹，已按生成后事件规则从目录顶层分选 ${groups.Domain.length} 个DLL（跳过 ${groups.skipped.length} 个：第三方/WEB/壳程序集）`,
           "log-warning"
         );
         // 确保目标目录存在（copy_dll_files_by_names 会创建，但提前创建以保证后续 compress_zip 有目录）
@@ -1919,6 +1921,9 @@ const publishWpfClient = async () => {
           printInfoLog(`复制文件目录 ${domainPath} 失败.`, "log-error");
           return false;
         }
+      } else {
+        printInfoLog(`未检测到 Domain 文件夹，且当前为新版本模式，不执行扁平兜底.`, "log-error");
+        return false;
       }
 
       // UI
@@ -1933,10 +1938,11 @@ const publishWpfClient = async () => {
           printInfoLog(`复制文件目录 ${uiPath} 失败.`, "log-error");
           return false;
         }
-      } else {
+      } else if (!isNewVersion) {
         const groups = await ensureFlatGroups();
+        if (!groups) return false;
         printInfoLog(
-          `未检测到 UI 文件夹，已按名称规则（含WPF→UI、含WEB→跳过、其余→Domain）从目录顶层分选 ${groups.UI.length} 个DLL`,
+          `未检测到 UI 文件夹，已按生成后事件规则从目录顶层分选 ${groups.UI.length} 个DLL（跳过 ${groups.skipped.length} 个：第三方/WEB/壳程序集）`,
           "log-warning"
         );
         await cmdInvoke("create_dir", { path: destinationUiPath });
@@ -1949,6 +1955,9 @@ const publishWpfClient = async () => {
           printInfoLog(`复制文件目录 ${uiPath} 失败.`, "log-error");
           return false;
         }
+      } else {
+        printInfoLog(`未检测到 UI 文件夹，且当前为新版本模式，不执行扁平兜底.`, "log-error");
+        return false;
       }
 
       // 重新打包压缩
@@ -2943,6 +2952,43 @@ const copyWpfAssemblyFile = async (
 
   try {
     let dllModeDateRange = getDllModeDateRange();
+    // --- 扁平自愈兜底：缺失的 Domain/UI 文件夹按生成后事件规则补建（copy 不动顶层原文件），10.2+ 新版本不兜底 ---
+    // 自愈后：下方目录存在性检查、各 dllMode 的复制、Plugins.zip 压缩（直接取 clientPath/Domain、clientPath/UI）均无需改动。
+    if (!Boolean(state.publishData.appconfigData.configItems.isNewVersion)) {
+      const clientRoot = removeSlash(appConfig.clientPath);
+      let flatGroups: { Domain: string[]; UI: string[]; skipped: string[] } | null = null;
+      const ensureFlatGroups = async () => {
+        if (flatGroups) return flatGroups;
+        const readRes = await cmdInvoke("read_all_dlls", { dir: clientRoot });
+        if (readRes.code !== 0 || !Array.isArray(readRes.data)) {
+          printInfoLog(`读取目录顶层DLL失败：${readRes.data}，无法执行扁平自愈兜底.`, "log-error");
+          return null;
+        }
+        flatGroups = classifyWpfDlls(readRes.data as string[]);
+        return flatGroups;
+      };
+      for (const healDir of ["Domain", "UI"] as const) {
+        const healPath = `${clientRoot}/${healDir}`;
+        const healExistsRes = await cmdInvoke("exists", { path: healPath });
+        if (healExistsRes.code === 0) continue;
+        const groups = await ensureFlatGroups();
+        if (!groups) return false;
+        await cmdInvoke("create_dir", { path: healPath });
+        const healCopyRes = await cmdInvoke("copy_dll_files_by_names", {
+          source: clientRoot,
+          fileNames: groups[healDir],
+          destination: healPath,
+        });
+        if (healCopyRes.code !== 0) {
+          printInfoLog(`自愈补建 ${healDir} 文件夹失败：${healCopyRes.data}.`, "log-error");
+          return false;
+        }
+        printInfoLog(
+          `未检测到 ${healDir} 文件夹，已按生成后事件规则自愈补建（复制 ${groups[healDir].length} 个DLL，跳过 ${groups.skipped.length} 个：第三方/WEB/壳程序集）`,
+          "log-warning"
+        );
+      }
+    }
     // 1.[生成目录]
     let generateDirArr = JSON.parse(appConfig.generateDirJson);
     for (let i = 0; i < generateDirArr.length; i++) {

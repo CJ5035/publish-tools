@@ -476,8 +476,9 @@ const getWpfClientConfigType = async (
 
   var backFiles = new Array();
   const generateDirs = JSON.parse(serverConfigItem.generateDirJson) as string[];
-  // --- 扁平兜底：探测 Domain/UI 存在性，任一缺失时计算顶层分选结果 ---
+  // --- 扁平兜底：探测 Domain/UI 存在性，任一缺失时计算顶层分选结果；10.2+ 新版本不兜底 ---
   const clientRoot = removeSlash(serverConfigItem.clientPath);
+  const isNewVersion = Boolean(appconfigData.configItems?.isNewVersion);
   let dirExists: { Domain: boolean; UI: boolean } = { Domain: true, UI: true };
   let flatGroups: WpfDllClassifyResult | null = null;
   try {
@@ -485,7 +486,7 @@ const getWpfClientConfigType = async (
     const uiRes = await cmdInvoke("exists", { path: `${clientRoot}/UI` });
     dirExists.Domain = domainRes.code === 0 && (domainRes.data as boolean) === true;
     dirExists.UI = uiRes.code === 0 && (uiRes.data as boolean) === true;
-    if (!dirExists.Domain || !dirExists.UI) {
+    if (!isNewVersion && (!dirExists.Domain || !dirExists.UI)) {
       const topDlls = await getReadAllDlls(clientRoot);
       flatGroups = classifyWpfDlls(topDlls);
     }
@@ -493,7 +494,7 @@ const getWpfClientConfigType = async (
     // 探测失败时保持默认：不触发兜底，按原逻辑走子目录读取（若目录不存在，后续 read 会返回空）
   }
   const isFlatFallback = (dir: string) =>
-    (dir === "Domain" || dir === "UI") && flatGroups !== null && !dirExists[dir as keyof typeof dirExists];
+    !isNewVersion && (dir === "Domain" || dir === "UI") && flatGroups !== null && !dirExists[dir as keyof typeof dirExists];
 
   for (let i = 0; i < generateDirs.length; i++) {
     const generateDir = generateDirs[i];
