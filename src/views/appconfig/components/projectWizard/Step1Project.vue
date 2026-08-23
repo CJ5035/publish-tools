@@ -54,6 +54,26 @@
         </el-table-column>
       </el-table>
     </div>
+    <el-divider v-if="draft.tfs || tfsDetectFailed" />
+    <div v-if="draft.tfs || tfsDetectFailed">
+      <h4>TFS 识别结果 <el-tag v-if="tfsDetecting" size="small">识别中…</el-tag></h4>
+      <template v-if="draft.tfs">
+        <el-form label-width="110px">
+          <el-form-item label="TFS名称" required>
+            <el-input v-model="draft.tfs.tfsName" maxlength="50" clearable placeholder="默认取源位置尾段，可改为客户名（如：新容）" style="max-width:360px;" />
+          </el-form-item>
+        </el-form>
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="服务地址">{{ draft.tfs.tfsServerUrl }}</el-descriptions-item>
+          <el-descriptions-item label="源位置">{{ draft.tfs.tfsSourcePath }}</el-descriptions-item>
+          <el-descriptions-item label="本地根目录">{{ draft.tfs.tfsLocalPath }}</el-descriptions-item>
+          <el-descriptions-item label="TFVC工具">{{ draft.tfs.tfvcPath }}</el-descriptions-item>
+          <el-descriptions-item label="工作区">{{ draft.tfs.workspaceName }}</el-descriptions-item>
+        </el-descriptions>
+        <el-text type="info" size="small">提交时自动保存到 TFS 配置（已存在相同 服务地址+源位置 的记录则复用）</el-text>
+      </template>
+      <div v-else style="color:#E6A23C;">{{ tfsDetectFailed }}</div>
+    </div>
   </div>
 </template>
 <script setup lang="ts">
@@ -62,11 +82,16 @@ import { ElMessage } from 'element-plus';
 import { open } from '@tauri-apps/plugin-dialog';
 import { cmdInvoke } from '@/utils/command';
 import { useProjectDb } from '@/database/project';
+import { useTfsDb } from '@/database/teamFoundationServer';
 import { removeSlash } from '@/utils/other';
 import type { WizardDraft, ServiceName } from './wizardTypes';
+import { defaultTfsName } from './wizardTypes';
 
 const draft = inject<WizardDraft>('wizardDraft')!;
 const projectDb = useProjectDb();
+const tfsDb = useTfsDb();
+const tfsDetectFailed = ref('');
+const tfsDetecting = ref(false);
 
 const projectMode = computed<'existing' | 'new'>({
   get: () => draft.s1Mode.projectMode,
@@ -102,6 +127,38 @@ async function onSelectSln(){
   const sel = await open({ multiple:false, filters:[{ name:'解决方案文件', extensions:['sln'] }] });
   if(!sel) return;
   draft.project.slnPath = removeSlash(String(sel));
+  await detectTfs();
+}
+
+/** SLN 的 TFS 工作区自动识别：tfvcPath 优先复用存量 TFS 记录（避免全盘扫描），失败仅提示不阻塞 */
+async function detectTfs(){
+  draft.tfs = null;
+  tfsDetectFailed.value = '';
+  if(!draft.project.slnPath) return;
+  tfsDetecting.value = true;
+  try {
+    let tfvcPath: string | null = null;
+    try {
+      const tr = await tfsDb.getTfsList({ tfsName:null, tfsSourcePath:null, sorting:'id DESC', skipCount:0, maxResultCount:1000 });
+      const first = (tr.data?.data ?? []).find((x:RowTfsType)=>x.tfvcPath);
+      tfvcPath = first?.tfvcPath ?? null;
+    } catch { /* 查询失败走 Rust 端 find_tf_exe 兜底 */ }
+    const r = await cmdInvoke<any>('detect_tfs_workspace', { slnPath: draft.project.slnPath, tfvcPath });
+    if(r.code===0 && r.data){
+      draft.tfs = {
+        tfsName: defaultTfsName(r.data.tfsSourcePath),
+        tfsServerUrl: r.data.tfsServerUrl,
+        tfsSourcePath: r.data.tfsSourcePath,
+        tfsLocalPath: r.data.tfsLocalPath,
+        tfvcPath: r.data.tfvcPath,
+        workspaceName: r.data.workspaceName,
+      };
+    } else {
+      tfsDetectFailed.value = `未识别到 TFS 工作区：${r.data ?? r.msg}（可忽略，稍后在 TFS 管理页手动录入）`;
+    }
+  } finally {
+    tfsDetecting.value = false;
+  }
 }
 
 async function validate(): Promise<boolean> {
