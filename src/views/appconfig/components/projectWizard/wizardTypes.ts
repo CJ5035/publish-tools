@@ -1,3 +1,6 @@
+import type { TfsDetectInfo } from '@/utils/tfsDetect';
+import { defaultTfsName as _defaultTfsName } from '@/utils/tfsDetect';
+
 export type ServiceName = 'webApiHost' | 'webClient' | 'scheduleServer' | 'spcMonitor' | 'wpfClient';
 export const SERVICE_NAMES: ServiceName[] = ['webApiHost', 'webClient', 'scheduleServer', 'spcMonitor', 'wpfClient'];
 export const NORMAL_SERVICES: ServiceName[] = ['webApiHost', 'webClient', 'scheduleServer', 'spcMonitor'];
@@ -25,21 +28,13 @@ export interface WizardProject {
   clientPaths: Partial<Record<ServiceName, string>>;
 }
 
-export interface WizardTfsInfo {
-  tfsName: string;
-  tfsServerUrl: string;
-  tfsSourcePath: string;
-  tfsLocalPath: string;
-  tfvcPath: string;
-  workspaceName: string;
-}
+export type WizardTfsInfo = TfsDetectInfo;
 
 /** tfsName 默认值：取源位置尾段（如 $/SMOM.DEV.10.2/SMOM.NBXR → SMOM.NBXR）。
- *  不用 Collection 尾段——存量记录共享同一集合，同集合多项目会生成相同默认名，必撞唯一性查重。 */
+ *  不用 Collection 尾段——存量记录共享同一集合，同集合多项目会生成相同默认名，必撞唯一性查重。
+ *  委托 tfsDetect 实现，保持向后兼容。 */
 export function defaultTfsName(tfsSourcePath: string): string {
-  const p = tfsSourcePath.replace(/\\/g, '/').replace(/\/+$/, '');
-  const idx = p.lastIndexOf('/');
-  return idx >= 0 ? p.substring(idx + 1) : p;
+  return _defaultTfsName(tfsSourcePath);
 }
 
 export interface ServiceTarget {
@@ -70,7 +65,7 @@ export interface WizardDraft {
   s1Mode: { projectMode: 'existing' | 'new'; selectedProjectId: number | null };
   envs: number[];
   envConfig: Record<number, EnvConfig>;
-  tfs: WizardTfsInfo | null;
+  tfs: TfsDetectInfo | null;
   tfsSaved: boolean;
 }
 
