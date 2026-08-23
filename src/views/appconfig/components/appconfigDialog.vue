@@ -68,6 +68,18 @@
               </el-select>
             </el-form-item>
           </el-col>
+          <el-col :span="24" class="mb15" v-if="tfsDetected || tfsDetectFailed">
+            <el-alert v-if="tfsDetected" type="success" :closable="false" show-icon
+              :title="`TFS 识别：${tfsDetected.tfsSourcePath}（${tfsDetected.tfsServerUrl}）`">
+              <div>本地根目录：{{ tfsDetected.tfsLocalPath }}｜工作区：{{ tfsDetected.workspaceName }}</div>
+              <div v-if="tfsMatchedExisting">已自动匹配现有TFS记录，发布模式选"TFS"时直接可用</div>
+              <div v-else style="margin-top:6px;">
+                <el-input v-model="tfsDetected.tfsName" maxlength="50" size="small" style="width:220px;" placeholder="TFS名称" />
+                <el-button size="small" type="primary" style="margin-left:8px;" @click="onSaveDetectedTfs">保存为TFS记录并选中</el-button>
+              </div>
+            </el-alert>
+            <el-alert v-else type="warning" :closable="false" show-icon :title="tfsDetectFailed" />
+          </el-col>
           <el-col :span="15" class="mb15" v-show="state.ruleForm.dllMode === 'DLL名称'">
             <el-form-item label-width="0" prop="dllModeValue">
               <el-input v-model="state.ruleForm.dllModeValue" type="textarea" :rows="3"
@@ -517,6 +529,8 @@
 import { nextTick, reactive, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage } from "element-plus";
+import { detectTfsForSln, saveTfsRecord, findTfsDuplicate } from "@/utils/tfsDetect";
+import type { TfsDetectInfo } from "@/utils/tfsDetect";
 import { CirclePlus, Remove, Files } from "@element-plus/icons-vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import _ from "lodash";
@@ -581,6 +595,10 @@ const selectGitItem = ref<SelectGitType>({
     },
   ],
 });
+// TFS 自动识别（选 SLN 后触发；与 tfsId 下拉联动）
+const tfsDetected = ref<TfsDetectInfo | null>(null);
+const tfsDetectFailed = ref("");
+const tfsMatchedExisting = ref(false);
 const state = reactive<FormDialogType<RowAppconfigType>>({
   ruleForm: {
     id: null,
@@ -708,6 +726,22 @@ const onSlnFileChange = async () => {
     state.ruleForm.configItems.wpfClient.generateDirJson = JSON.stringify(
       generateDirs.value
     );
+  }
+  // TFS 自动识别：命中存量记录则预选 tfsId；未命中提示可保存（不切换 dllMode，不静默落库）
+  tfsDetected.value = null;
+  tfsDetectFailed.value = "";
+  tfsMatchedExisting.value = false;
+  const detected = await detectTfsForSln(slnFilePath);
+  if (!detected) {
+    tfsDetectFailed.value = "未识别到 TFS 工作区（可忽略，不影响本弹窗）";
+    return true;
+  }
+  tfsDetected.value = detected;
+  const dup = findTfsDuplicate(tfsList.value ?? [], detected);
+  if (dup?.id) {
+    tfsMatchedExisting.value = true;
+    selectTfsItem.value.id = dup.id;
+    await onTfsChange(dup.id);
   }
   return true;
 };
@@ -1125,6 +1159,23 @@ const onTfsChange = async (val: number) => {
   }
 };
 
+// 保存识别结果为新 TFS 记录并选中（用户主动触发）
+const onSaveDetectedTfs = async () => {
+  if (!tfsDetected.value) return;
+  try {
+    const r = await saveTfsRecord(tfsDetected.value);
+    await getTfsList();
+    if (r.id) {
+      selectTfsItem.value.id = r.id;
+      await onTfsChange(r.id);
+    }
+    tfsMatchedExisting.value = true;
+    ElMessage.success(r.reused ? "已复用现有TFS记录" : "已保存为新TFS记录并选中");
+  } catch (e: any) {
+    ElMessage.error(String(e.message ?? e)); // 撞名等错误提示
+  }
+};
+
 // 选择Git切换
 const onGitChange = async (val: number) => {
   if (!gitList.value) return;
@@ -1278,6 +1329,9 @@ const formReset = () => {
       },
     ],
   };
+  tfsDetected.value = null;
+  tfsDetectFailed.value = "";
+  tfsMatchedExisting.value = false;
 };
 
 // 打开弹窗
