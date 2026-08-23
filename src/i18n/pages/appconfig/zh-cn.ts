@@ -19,6 +19,13 @@ export default {
       resumeRestart: '重新开始',
       importedHint: '已带入该项目 {n} 台服务器（可编辑/删除，未带入其他项目服务器）',
       envConfigured: '已配置',
+      envCol: '环境',
+      wpfServerCol: 'wpfClient服务器',
+      copyRow: '复制',
+      testAll: '全部测试',
+      testOk: '成功',
+      testFail: '失败',
+      testTesting: '测试中',
       summaryInsert: '新增成功',
       summaryUpdate: '更新成功',
       steps: {

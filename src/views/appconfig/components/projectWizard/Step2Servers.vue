@@ -6,10 +6,11 @@
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <el-button type="primary" @click="onAdd">添加服务器</el-button>
       <el-button @click="onImport">从已有导入</el-button>
+      <el-button @click="onTestAll">{{ t('message.appconfig.wizard.testAll') }}</el-button>
     </div>
     <el-table :data="draft.servers" border size="small">
       <el-table-column label="名称" width="140">
-        <template #default="{ row }"><el-input v-model="row.name" placeholder="名称" size="small" /></template>
+        <template #default="{ row }"><el-input v-model="row.name" placeholder="名称" size="small" @change="onNameChange(row)" /></template>
       </el-table-column>
       <el-table-column label="系统" width="120">
         <template #default="{ row }">
@@ -30,11 +31,27 @@
       <el-table-column label="密码" width="120">
         <template #default="{ row }"><el-input v-model="row.pwd" type="password" placeholder="密码" size="small" show-password /></template>
       </el-table-column>
+      <el-table-column :label="t('message.appconfig.wizard.envCol')" width="180">
+        <template #default="{ row }">
+          <el-select v-model="row.envTags" multiple size="small" style="width:100%;" :placeholder="t('message.appconfig.wizard.envCol')">
+            <el-option :value="1" label="Dev" /><el-option :value="2" label="Uat" /><el-option :value="3" label="Pro" />
+          </el-select>
+        </template>
+      </el-table-column>
+      <el-table-column :label="t('message.appconfig.wizard.wpfServerCol')" width="110">
+        <template #default="{ row }">
+          <el-checkbox v-model="row.isWpfServer" />
+        </template>
+      </el-table-column>
       <el-table-column label="扫描根路径">
         <template #default="{ row }"><el-input v-model="row.scanRoot" placeholder="可选：服务枚举失败时兜底目录扫描用" size="small" /></template>
       </el-table-column>
-      <el-table-column label="操作" width="160">
+      <el-table-column label="操作" width="200">
         <template #default="{ row, $index }">
+          <el-tag v-if="testStatus[`${row.ip}:${row.port}`]" size="small" :type="testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'success' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'danger' : 'warning'">
+            {{ t(`message.appconfig.wizard.test${testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'Ok' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'Fail' : 'Testing'}`) }}
+          </el-tag>
+          <el-button size="small" @click="onCopyRow(row)">{{ t('message.appconfig.wizard.copyRow') }}</el-button>
           <el-button size="small" @click="onTest(row)">测试连接</el-button>
           <el-button size="small" type="danger" @click="onRemove($index)">删除</el-button>
         </template>
@@ -62,6 +79,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { cmdInvoke } from '@/utils/command';
 import { useServerDb } from '@/database/servers';
+import { useAppconfigDb } from '@/database/appconfig';
 import type { WizardDraft, WizardServer } from './wizardTypes';
 import { deriveServerEnvTags } from './wizardTypes';
 
@@ -72,17 +90,61 @@ const serverDb = useServerDb();
 
 const importedCount = ref(0);
 
-/** 项 6 续配：S1 选了已有项目且池为空时，自动带入该项目全部服务器（isNew:false 保留原 id，
- *  落库语义不变）；二期不含 isWpfServer 回勾（三期）。 */
+const testStatus = ref<Record<string, 'ok' | 'fail' | 'testing'>>({});
+
+function onNameChange(row: WizardServer) {
+  if (row.envTags.length === 0) row.envTags = deriveServerEnvTags(row.name);
+}
+
+/** 复制该行为新行：保留账密/端口/系统/扫描根/环境标签/isWpfServer，清空名称/IP（项 15） */
+function onCopyRow(row: WizardServer) {
+  const { id, name, ip, ...rest } = row;
+  draft.servers.push({ ...rest, name: '', ip: '', isNew: true });
+}
+
+/** 批量测试连接（项 15）：并发上限 4，结果落行内 tag */
+async function onTestAll() {
+  const queue = draft.servers.filter((s) => s.ip && s.port && s.account);
+  const workers = Array.from({ length: Math.min(4, queue.length) }, () => (async () => {
+    while (queue.length > 0) {
+      const s = queue.shift()!;
+      await testOne(s);
+    }
+  })());
+  await Promise.all(workers);
+}
+
+async function testOne(row: WizardServer) {
+  const key = `${row.ip}:${row.port}`;
+  testStatus.value[key] = 'testing';
+  const r = await cmdInvoke('server_connection', { username: row.account, password: row.pwd, server: key });
+  testStatus.value[key] = r.code === 0 ? 'ok' : 'fail';
+}
+
 onMounted(async () => {
   if (!draft.project.id || draft.servers.length > 0) return;
   try {
     const r = await serverDb.getServerList({ projectId: draft.project.id, name: null, sorting: 'ts.id DESC', skipCount: 0, maxResultCount: 1000 } as any);
     const rows = ((r.data as any)?.data ?? []) as RowServerType[];
+    // 续配回勾：项目已有配置的 wpfClient.serverId 集合 → 命中服务器自动勾选 wpfClient
+    const wpfServerIds = new Set<number>();
+    if (rows.length > 0) {
+      const appconfigDb = useAppconfigDb();
+      for (const env of [1, 2, 3, 4]) {
+        try {
+          const cr = await appconfigDb.getPublishAppconfigs(draft.project.id!, env);
+          const row = (cr.data as any)?.data;
+          if (row?.id && row.configItemsJson) {
+            const wpfId = (JSON.parse(row.configItemsJson) as any)?.wpfClient?.serverId;
+            if (typeof wpfId === 'number') wpfServerIds.add(wpfId);
+          }
+        } catch {}
+      }
+    }
     for (const s of rows) {
       const key = `${s.ip}:${s.port}`;
       if (draft.servers.some((x) => `${x.ip}:${x.port}` === key)) continue;
-      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false, envTags: deriveServerEnvTags(s.name), isWpfServer: false });
+      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false, envTags: deriveServerEnvTags(s.name), isWpfServer: wpfServerIds.has(s.id!) });
     }
     importedCount.value = draft.servers.length;
   } catch (e) {
@@ -102,9 +164,9 @@ function onRemove(idx:number){
 }
 async function onTest(row:WizardServer){
   if(!row.ip || !row.port || !row.account){ ElMessage.warning('请先填写 IP/端口/账号'); return; }
-  const r = await cmdInvoke('server_connection', { username: row.account, password: row.pwd, server: `${row.ip}:${row.port}` });
-  if(r.code===0) ElMessage.success('连接成功');
-  else ElMessageBox.alert(String(r.data ?? r.msg), '连接失败');
+  await testOne(row);
+  if(testStatus.value[`${row.ip}:${row.port}`]==='ok') ElMessage.success('连接成功');
+  else ElMessageBox.alert('连接失败');
 }
 async function onImport(){
   const r = await serverDb.getServerList({ projectId:null, name:null, sorting:'ts.id DESC', skipCount:0, maxResultCount:1000 } as any);

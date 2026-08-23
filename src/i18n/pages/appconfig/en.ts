@@ -19,6 +19,13 @@ export default {
       resumeRestart: 'Start Over',
       importedHint: 'Imported {n} server(s) from this project (editable/removable; other projects are not imported)',
       envConfigured: 'Configured',
+      envCol: 'Environment',
+      wpfServerCol: 'wpfClient server',
+      copyRow: 'Copy',
+      testAll: 'Test All',
+      testOk: 'OK',
+      testFail: 'Fail',
+      testTesting: 'Testing',
       summaryInsert: 'Created',
       summaryUpdate: 'Updated',
       steps: {
