@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h3>确认 ({{ currentEnvLabel }})</h3>
     <el-table :data="summary" border size="small">
@@ -6,24 +6,37 @@
       <el-table-column prop="server" label="服务器" />
       <el-table-column prop="path" label="路径" />
     </el-table>
-    <div v-if="dupMsg" style="color:#F56C6C;margin-top:12px;">{{ dupMsg }}</div>
+    <el-alert
+      v-if="existingRow"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-top:12px;"
+    >{{ t('message.appconfig.wizard.confirm.dupHint') }}</el-alert>
   </div>
 </template>
 <script setup lang="ts">
 import { inject, ref, computed, onMounted } from 'vue';
 import { ElMessageBox } from 'element-plus';
+import { useI18n } from 'vue-i18n';
 import { useProjectDb } from '@/database/project';
 import { useServerDb } from '@/database/servers';
 import { useAppconfigDb } from '@/database/appconfig';
+import { useSettingsDb } from '@/database/settings/index';
 import type { WizardDraft } from './wizardTypes';
-import { NORMAL_SERVICES, displayEnv } from './wizardTypes';
+import { NORMAL_SERVICES, displayEnv, mergeConfigItems } from './wizardTypes';
+
+const { t } = useI18n();
 
 const props = defineProps<{ currentEnv: number }>();
 const draft = inject<WizardDraft>('wizardDraft')!;
 const projectDb = useProjectDb();
 const serverDb = useServerDb();
 const appconfigDb = useAppconfigDb();
-const dupMsg = ref('');
+// 已有配置行（仅用于提示展示；落库前 validate 内重新权威查询）
+const existingRow = ref<RowAppconfigType | null>(null);
+// 本环境本次提交模式，供 index.vue 总结页展示
+const saveMode = ref<'insert' | 'update'>('insert');
 
 const currentEnvLabel = computed(()=> displayEnv(props.currentEnv));
 const summary = computed(()=>{
@@ -40,19 +53,26 @@ const summary = computed(()=>{
   return rows;
 });
 
-onMounted(async ()=>{
-  dupMsg.value='';
-  // duplicate check: projectId must be known or new project will be checked after creation; for existing project check now
-  if(draft.project.id){
-    try{
+onMounted(async () => {
+  existingRow.value = null;
+  if (draft.project.id) {
+    try {
       const r = await appconfigDb.getPublishAppconfigs(draft.project.id, props.currentEnv);
-      if(r.code===0 && (r.data as any)?.data?.id){
-        dupMsg.value = `该环境已有配置，请使用编辑功能`;
-        await ElMessageBox.alert(dupMsg.value, '提示');
+      if (r.code === 0 && (r.data as any)?.data?.id) {
+        existingRow.value = (r.data as any).data as RowAppconfigType;
       }
-    }catch{}
+    } catch {}
   }
 });
+
+async function findExisting(): Promise<RowAppconfigType | null> {
+  if (!draft.project.id) return null;
+  try {
+    const r = await appconfigDb.getPublishAppconfigs(draft.project.id, props.currentEnv);
+    if (r.code === 0 && (r.data as any)?.data?.id) return (r.data as any).data as RowAppconfigType;
+  } catch {}
+  return null;
+}
 
 function buildConfigItems(env:number): RowAppconfigType {
   const cfg = draft.envConfig[env];
@@ -84,50 +104,79 @@ function buildConfigItems(env:number): RowAppconfigType {
   } as any;
 }
 
-async function validate(): Promise<boolean>{
-  if(dupMsg.value) return false;
-  // duplicate re-check
-  if(draft.project.id){
-    const r = await appconfigDb.getPublishAppconfigs(draft.project.id, props.currentEnv);
-    if(r.code===0 && (r.data as any)?.data?.id){
-      await ElMessageBox.alert('该环境已有配置，请使用编辑功能','提示');
-      return false;
+async function validate(): Promise<boolean> {
+  try {
+    // 0) 已有配置确认（在任何写库之前，取消零副作用；新建项目不可能命中，天然跳过）
+    const existing = await findExisting();
+    if (existing) {
+      existingRow.value = existing;
+      const ok = await ElMessageBox.confirm(
+        t('message.appconfig.wizard.confirm.dupConfirmMsg'),
+        t('message.appconfig.wizard.confirm.dupConfirmTitle'),
+        {
+          type: 'warning',
+          confirmButtonText: t('message.appconfig.wizard.confirm.dupConfirmOk'),
+          cancelButtonText: t('message.appconfig.wizard.cancel'),
+        }
+      ).then(() => true).catch(() => false);
+      if (!ok) return false;
     }
-  }
-  try{
-    // 0) project
+    // 1) project
     let projectId = draft.project.id;
-    if(!projectId){
-      const pr = await projectDb.insertProject({ id:null, code: draft.project.code, name: draft.project.name, description:null, isDefault:0, assemblyOutPath: draft.project.assemblyOutPath ?? null } as any);
-      if(pr.code!==0) throw new Error(pr.msg);
+    if (!projectId) {
+      const pr = await projectDb.insertProject({ id: null, code: draft.project.code, name: draft.project.name, description: null, isDefault: 0, assemblyOutPath: draft.project.assemblyOutPath ?? null } as any);
+      if (pr.code !== 0) throw new Error(pr.msg);
       projectId = pr.data;
       draft.project.id = pr.data;
     }
-    // 1) servers (first env only)
-    if(draft.servers.some(x=>x.isNew)){
-      const existing = await serverDb.getServerList({ projectId, name:null, sorting:'id DESC', skipCount:0, maxResultCount:1000 } as any);
-      const existingKeys = new Set(((existing.data as any)?.data ?? []).map((x:RowServerType)=>`${x.ip}:${x.port}`));
-      for(const s of draft.servers.filter(x=>x.isNew)){
+    // 2) servers (first env only)
+    if (draft.servers.some((x) => x.isNew)) {
+      const exServers = await serverDb.getServerList({ projectId, name: null, sorting: 'id DESC', skipCount: 0, maxResultCount: 1000 } as any);
+      const existingKeys = new Set(((exServers.data as any)?.data ?? []).map((x: RowServerType) => `${x.ip}:${x.port}`));
+      for (const s of draft.servers.filter((x) => x.isNew)) {
         const key = `${s.ip}:${s.port}`;
-        if(existingKeys.has(key)){
-          const found = ((existing.data as any).data as RowServerType[]).find(x=>`${x.ip}:${x.port}`===key)!;
-          s.id = found.id!; s.isNew=false; continue;
+        if (existingKeys.has(key)) {
+          const found = ((exServers.data as any).data as RowServerType[]).find((x) => `${x.ip}:${x.port}` === key)!;
+          s.id = found.id!; s.isNew = false; continue;
         }
-        const r = await serverDb.insertServer({ id:null, projectId, projectName:null, name:s.name, os:s.os, ip:s.ip, port:s.port, account:s.account, pwd:s.pwd, description:null } as any);
-        if(r.code!==0) throw new Error(r.msg);
-        s.id = r.data; s.isNew=false;
+        const r = await serverDb.insertServer({ id: null, projectId, projectName: null, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account, pwd: s.pwd, description: null } as any);
+        if (r.code !== 0) throw new Error(r.msg);
+        s.id = r.data; s.isNew = false;
       }
     }
-    // 2) appconfig
+    // 3) appconfig：已有 → 合并更新；没有 → 新增
     const row = buildConfigItems(props.currentEnv);
     row.projectId = draft.project.id!;
+    if (!existing) {
+      try {
+        const gr = await useSettingsDb().getSettings();
+        if (gr.code === 0 && gr.data?.msBuildPath) {
+          const v = String(gr.data.msBuildPath).trim();
+          if (v) row.msBuildPath = v;
+        }
+      } catch {}
+    }
+    if (existing) {
+      row.id = existing.id!;
+      row.msBuildPath = existing.msBuildPath ?? null;
+      row.dllMode = existing.dllMode ?? '全部';
+      row.dllModeValue = existing.dllModeValue ?? null;
+      row.configItems = mergeConfigItems(existing.configItems, row.configItems);
+      row.configItemsJson = JSON.stringify(row.configItems);
+      const upd = await appconfigDb.updateAppconfig(row as any);
+      if (upd.code !== 0) throw new Error(upd.msg);
+      saveMode.value = 'update';
+      return true;
+    }
     const ins = await appconfigDb.insertAppconfig(row as any);
-    if(ins.code!==0) throw new Error(ins.msg);
+    if (ins.code !== 0) throw new Error(ins.msg);
+    saveMode.value = 'insert';
     return true;
-  }catch(e:any){
+  } catch (e: any) {
     await ElMessageBox.alert(String(e.message ?? e), '落库失败');
     return false;
   }
 }
-defineExpose({ validate });
+defineExpose({ validate, saveMode });
 </script>
+
