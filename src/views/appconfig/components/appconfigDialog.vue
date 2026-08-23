@@ -792,7 +792,8 @@ const onDllModeChange = async (val: string) => {
     state.ruleForm.configItems.wpfClient.isCompress = 0;
   }
   state.ruleForm.dllModeValue = null;
-  dllModeDate.value = [Object(null), Object(null)];
+  // 置空必须是 undefined：非 Date 真值（如 {}）会被 element-plus 解析成 Invalid Dayjs，日历无法选中
+  dllModeDate.value = undefined;
 
   // TFS
   selectTfsItem.value.id = null;
@@ -1296,6 +1297,7 @@ const formReset = () => {
   state.ruleForm.configItems.wpfClient.isCompress = null;
   state.ruleForm.dllMode = "全部";
   state.ruleForm.buildMode = "Debug";
+  dllModeDate.value = undefined; // 消除上一次弹窗会话的残留日期
   if (state.ruleForm.projectId == 0) state.ruleForm.projectId = null;
   if (state.ruleForm.environment == 0) state.ruleForm.environment = 1;
   state.dialog.editId = null;
