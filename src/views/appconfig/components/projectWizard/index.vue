@@ -24,7 +24,6 @@
         <el-table-column prop="msg" label="说明" />
       </el-table>
       <div style="margin-top:16px;text-align:right;">
-        <el-button @click="onRetryFailed" v-if="hasFailed">重试失败环境</el-button>
         <el-button type="primary" @click="onFinish">完成</el-button>
       </div>
     </div>
@@ -47,6 +46,8 @@
 
 <script setup lang="ts">
 import { ref, computed, provide, reactive } from 'vue';
+import { ElMessageBox } from 'element-plus';
+import { useI18n } from 'vue-i18n';
 import { createEmptyDraft, displayEnv } from './wizardTypes';
 import type { WizardDraft } from './wizardTypes';
 import Step1Project from './Step1Project.vue';
@@ -57,20 +58,26 @@ import Step5ServiceAssign from './Step5ServiceAssign.vue';
 import Step6Confirm from './Step6Confirm.vue';
 
 const emit = defineEmits<{ (e: 'refresh'): void }>();
+const { t } = useI18n();
 
 const visible = ref(false);
 const stepIndex = ref(0);
 const currentEnvIndex = ref(0);
 const isSummary = ref(false);
 const summaryRows = ref<{ env: string; status: string; msg: string }[]>([]);
-const failedEnvs = ref<number[]>([]);
 
 const draft = reactive<WizardDraft>(createEmptyDraft());
 provide('wizardDraft', draft);
 
 const currentEnv = computed(() => draft.envs[currentEnvIndex.value] ?? 1);
 const hasNextEnv = computed(() => currentEnvIndex.value < draft.envs.length - 1);
-const hasFailed = computed(() => failedEnvs.value.length > 0);
+const hasProgress = computed(() =>
+  draft.servers.length > 0 ||
+  Object.keys(draft.scanResults).length > 0 ||
+  !!draft.project.slnPath ||
+  !!draft.project.id ||
+  draft.envs.length > 0
+);
 
 const step5Title = computed(() => draft.envs.length ? `服务分配 (${displayEnv(currentEnv.value)})` : '服务分配');
 const step6Title = computed(() => draft.envs.length ? `确认 (${displayEnv(currentEnv.value)})` : '确认');
@@ -93,7 +100,6 @@ function open() {
   currentEnvIndex.value = 0;
   isSummary.value = false;
   summaryRows.value = [];
-  failedEnvs.value = [];
   visible.value = true;
 }
 
@@ -133,23 +139,22 @@ function onPrev() {
   if (stepIndex.value > 0) stepIndex.value--;
 }
 
-function onCancel() {
+async function onCancel() {
+  if (hasProgress.value) {
+    try {
+      await ElMessageBox.confirm(t('message.appconfig.wizard.cancelConfirmMsg'), t('message.appconfig.wizard.cancelConfirmTitle'), {
+        type: 'warning',
+        confirmButtonText: t('message.appconfig.wizard.confirmAbandon'),
+        cancelButtonText: t('message.appconfig.wizard.keepEditing'),
+      });
+    } catch { return; }
+  }
   visible.value = false;
 }
 
 function onFinish() {
   visible.value = false;
   emit('refresh');
-}
-
-function onRetryFailed() {
-  // 简化：回到首个失败环境的 S5
-  if (failedEnvs.value.length === 0) return;
-  const target = failedEnvs.value[0];
-  const idx = draft.envs.indexOf(target);
-  if (idx >= 0) currentEnvIndex.value = idx;
-  isSummary.value = false;
-  stepIndex.value = 4;
 }
 
 defineExpose({ open });

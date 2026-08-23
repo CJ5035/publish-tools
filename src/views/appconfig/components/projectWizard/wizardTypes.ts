@@ -43,8 +43,12 @@ export interface EnvConfig {
 export interface WizardDraft {
   project: WizardProject;
   servers: WizardServer[];
-  scanResults: Record<string, Partial<Record<ServiceName, string>>>;
+  /** 每服务器每服务的全部识别节点路径（有序，最优在前）；同服务器多节点全部保留 */
+  scanResults: Record<string, Partial<Record<ServiceName, string[]>>>;
   scanCandidates: Record<string, Partial<Record<ServiceName, string[]>>>;
+  rawEnumerated: Record<string, RemoteServiceVo[]>;
+  manualPaths: Record<string, ServiceName[]>;
+  probedWpf: Record<string, string>;
   envs: number[];
   envConfig: Record<number, EnvConfig>;
 }
@@ -80,16 +84,22 @@ export function createEmptyDraft(): WizardDraft {
     servers: [],
     scanResults: {},
     scanCandidates: {},
+    rawEnumerated: {},
+    manualPaths: {},
+    probedWpf: {},
     envs: [],
     envConfig: {},
   };
 }
 
+/** 关键词匹配：每类服务返回全部命中节点的 exec_dir（按关键词命中长度降序，同分保持枚举序），
+ *  系统目录（svchost 宿主解析出的 C:\Windows\system32、/usr 等）整体排除，杜绝系统服务抢占；
+ *  全部命中计入 used，防止落选节点被后续服务类型重复认领。docker 挂载路径进 candidates。 */
 export function matchServices(
   services: RemoteServiceVo[],
   keywords: Record<ServiceName, string[]>
-): { matched: Partial<Record<ServiceName, string>>; candidates: Partial<Record<ServiceName, string[]>> } {
-  const matched: Partial<Record<ServiceName, string>> = {};
+): { matched: Partial<Record<ServiceName, string[]>>; candidates: Partial<Record<ServiceName, string[]>> } {
+  const matched: Partial<Record<ServiceName, string[]>> = {};
   const candidates: Partial<Record<ServiceName, string[]>> = {};
   const used = new Set<string>();
   const bestKwLen = (s: RemoteServiceVo, svc: ServiceName) => {
@@ -106,24 +116,100 @@ export function matchServices(
     const kws = keywords[svc].map((k) => k.toLowerCase());
     const hits = services.filter(
       (s) => !used.has(s.name) && kws.some((k) => s.name.toLowerCase().includes(k) || s.display_name.toLowerCase().includes(k))
-    );
+    ).filter((s) => !isSystemSubtree(s.exec_dir));
     if (hits.length === 0) continue;
     hits.sort((a, b) => bestKwLen(b, svc) - bestKwLen(a, svc));
-    matched[svc] = hits[0].exec_dir;
-    used.add(hits[0].name);
-    const extra = [
-      ...hits.slice(1).map((h) => h.exec_dir),
-      ...(hits[0].mounts ?? []),
-    ].filter((p) => p && p !== matched[svc]);
+    for (const h of hits) used.add(h.name);
+    const paths: string[] = [];
+    const seen = new Set<string>();
+    for (const h of hits) {
+      if (!h.exec_dir || seen.has(h.exec_dir)) continue;
+      seen.add(h.exec_dir);
+      paths.push(h.exec_dir);
+    }
+    if (paths.length === 0) continue;
+    matched[svc] = paths;
+    const extra = hits
+      .flatMap((h) => h.mounts ?? [])
+      .filter((p) => p && !seen.has(p));
     const uniq = [...new Set(extra)];
     if (uniq.length > 0) candidates[svc] = uniq;
   }
   return { matched, candidates };
 }
 
+export interface RematchInput {
+  rawEnumerated: Record<string, RemoteServiceVo[]>;
+  keywords: Record<ServiceName, string[]>;
+  manualPaths: Record<string, ServiceName[]>;
+  probedWpf: Record<string, string>;
+  prevScanResults: WizardDraft['scanResults'];
+  prevScanCandidates: WizardDraft['scanCandidates'];
+}
+
+/** 关键词保存后的本地重匹配（不联网）：非手动行跟随新关键词；手动行与 wpfClient 既有值/候选
+ *  （探测或深度扫描产生）一律保留；wpfClient 取值优先级 = 现值 > probedWpf > 关键词结果。
+ *  无原始数据的服务器（如扫描失败后手填）原样透传。 */
+export function rematchAll(input: RematchInput): {
+  scanResults: WizardDraft['scanResults'];
+  scanCandidates: WizardDraft['scanCandidates'];
+} {
+  const { rawEnumerated, keywords, manualPaths, probedWpf, prevScanResults, prevScanCandidates } = input;
+  const scanResults: WizardDraft['scanResults'] = {};
+  const scanCandidates: WizardDraft['scanCandidates'] = {};
+  const keys = [...new Set([...Object.keys(rawEnumerated), ...Object.keys(prevScanResults)])];
+  for (const key of keys) {
+    const raw = rawEnumerated[key];
+    if (!raw) {
+      scanResults[key] = { ...(prevScanResults[key] ?? {}) };
+      scanCandidates[key] = { ...(prevScanCandidates[key] ?? {}) };
+      continue;
+    }
+    const { matched, candidates } = matchServices(raw, keywords);
+    const manual = new Set(manualPaths[key] ?? []);
+    const result: Partial<Record<ServiceName, string[]>> = {};
+    const cand: Partial<Record<ServiceName, string[]>> = {};
+    for (const svc of SERVICE_NAMES) {
+      if (svc === 'wpfClient') {
+        const prev = prevScanResults[key]?.wpfClient;
+        const existing = prev && prev.length > 0 ? prev : probedWpf[key] ? [probedWpf[key]] : matched.wpfClient;
+        if (existing && existing.length > 0) result.wpfClient = existing;
+        const existingCand = prevScanCandidates[key]?.wpfClient ?? candidates.wpfClient;
+        if (existingCand && existingCand.length > 0) cand.wpfClient = existingCand;
+      } else if (manual.has(svc)) {
+        const kept = prevScanResults[key]?.[svc];
+        if (kept && kept.length > 0) result[svc] = kept;
+        const keptC = prevScanCandidates[key]?.[svc];
+        if (keptC) cand[svc] = keptC;
+      } else {
+        const m = matched[svc];
+        if (m) result[svc] = m;
+        const c = candidates[svc];
+        if (c) cand[svc] = c;
+      }
+    }
+    scanResults[key] = result;
+    scanCandidates[key] = cand;
+  }
+  return { scanResults, scanCandidates };
+}
+
 export function displayEnv(env: number): string {
   const map: Record<number, string> = { 1: 'Dev', 2: 'Uat', 3: 'Pro', 4: 'Other' };
   return map[env] ?? String(env);
+}
+
+/** 差量扫描目标计算：对比服务器池与已扫描键集——未扫描的进 toScan，池中已不存在的旧键进 toRemove。 */
+export function diffScanTargets(
+  servers: WizardServer[],
+  scannedKeys: string[]
+): { toScan: WizardServer[]; toRemove: string[] } {
+  const liveKeys = new Set(servers.map((s) => `${s.ip}:${s.port}`));
+  const scanned = new Set(scannedKeys);
+  return {
+    toScan: servers.filter((s) => !scanned.has(`${s.ip}:${s.port}`)),
+    toRemove: [...scanned].filter((k) => !liveKeys.has(k)),
+  };
 }
 
 export type ServerScanStatus = 'pending' | 'scanning' | 'done' | 'failed';
@@ -135,6 +221,15 @@ const WIN_ANCHOR_BLACKLIST = new Set(['windows', 'program files', 'program files
 
 function normAnchorKey(p: string): string {
   return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/** 系统目录子树判定：Windows 按二级段（c:/windows、c:/program files...），Linux 按一级段（/usr、/etc...）。
+ *  服务枚举里的 svchost 宿主服务 exec_dir 恒为 C:\Windows\system32，匹配与锚点推导共用此过滤。 */
+function isSystemSubtree(p: string): boolean {
+  const parts = normAnchorKey(p).split('/').filter(Boolean);
+  if (parts.length === 0) return false;
+  if (parts[0].endsWith(':')) return WIN_ANCHOR_BLACKLIST.has(parts[1] ?? '');
+  return LINUX_SUBTREE_BLACKLIST.has(parts[0]);
 }
 
 function parentDirOf(p: string): string {
@@ -152,10 +247,7 @@ export function deriveAnchors(execDirs: string[], os: number, account?: string):
     if (!n || n === '/') return false;
     const parts = n.split('/').filter(Boolean);
     if (parts.length < 2) return false;
-    if (parts[0].endsWith(':')) {
-      return !WIN_ANCHOR_BLACKLIST.has(parts[1]);
-    }
-    return !LINUX_SUBTREE_BLACKLIST.has(parts[0]);
+    return !isSystemSubtree(p);
   };
   const out: string[] = [];
   const seen = new Set<string>();

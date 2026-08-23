@@ -68,7 +68,7 @@ import type { WizardDraft, ServiceName } from './wizardTypes';
 const draft = inject<WizardDraft>('wizardDraft')!;
 const projectDb = useProjectDb();
 
-const projectMode = ref<'existing' | 'new'>('existing');
+const projectMode = ref<'existing' | 'new'>('new');
 const selectedProjectId = ref<number | null>(null);
 const projectList = ref<RowProjectType[]>([]);
 

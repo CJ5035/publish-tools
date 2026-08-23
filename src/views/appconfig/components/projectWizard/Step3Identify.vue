@@ -1,7 +1,7 @@
 <template>
   <div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
-      <el-button type="primary" :loading="scanning" @click="doScan">重新扫描</el-button>
+      <el-button type="primary" :loading="scanning" @click="doScan()">重新扫描</el-button>
       <el-button @click="keywordVisible=true">编辑关键词</el-button>
     </div>
     <template v-for="srv in draft.servers" :key="srv.ip+':'+srv.port">
@@ -12,31 +12,30 @@
             <el-tag v-if="statusOf(srv)" :type="statusOf(srv)!.type" size="small">{{ statusOf(srv)!.label }}</el-tag>
           </div>
         </template>
-        <el-table :data="rowsFor(srv)" border size="small">
-          <el-table-column label="服务" prop="service" width="150" />
-          <el-table-column label="状态" width="120">
-            <template #default="{ row }">
-              <el-tag v-if="row.status==='matched'" type="success" size="small">已识别</el-tag>
-              <el-tag v-else-if="row.status==='candidate'" type="warning" size="small">候选</el-tag>
-              <el-tag v-else type="info" size="small">未识别</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="路径">
-            <template #default="{ row }">
-              <div style="display:flex;gap:6px;">
-                <el-select v-if="row.candidates && row.candidates.length>0" v-model="row.path" placeholder="选择候选" size="small" style="flex:1;" allow-create filterable @change="onPathChange(srv,row)">
-                  <el-option v-for="c in row.candidates" :key="c" :label="c" :value="c" />
-                </el-select>
-                <el-input v-else v-model="row.path" placeholder="请填写路径" size="small" style="flex:1;" @change="onPathChange(srv,row)" />
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="110">
-            <template #default="{ row }">
-              <el-button v-if="row.service==='wpfClient'" size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">深度扫描</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div v-for="b in blocksFor(srv)" :key="b.svc" style="border:1px solid #eee;padding:10px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-weight:600;width:130px;">{{ b.svc }}</span>
+            <el-tag v-if="b.status==='matched'" type="success" size="small">已识别 {{ b.count }} 个节点</el-tag>
+            <el-tag v-else-if="b.status==='candidate'" type="warning" size="small">候选</el-tag>
+            <el-tag v-else type="info" size="small">未识别</el-tag>
+          </div>
+          <template v-if="b.svc==='wpfClient'">
+            <div style="display:flex;gap:6px;">
+              <el-select v-if="b.candidates.length>0" :model-value="b.paths[0] ?? ''" placeholder="选择候选" size="small" style="flex:1;" allow-create filterable @change="onWpfPathChange(srv,$event)">
+                <el-option v-for="c in b.candidates" :key="c" :label="c" :value="c" />
+              </el-select>
+              <el-input v-else :model-value="b.paths[0] ?? ''" placeholder="请填写路径" size="small" style="flex:1;" @change="onWpfPathChange(srv,$event)" />
+              <el-button size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">深度扫描</el-button>
+            </div>
+          </template>
+          <template v-else>
+            <div v-for="(p,idx) in b.displayPaths" :key="b.svc+'-'+idx" style="display:flex;gap:6px;margin-bottom:6px;">
+              <el-input :model-value="p" placeholder="请填写路径" size="small" style="flex:1;" @change="onRowPathChange(srv,b.svc,idx,$event)" />
+              <el-button size="small" type="danger" @click="removeRow(srv,b.svc,idx)">删除</el-button>
+            </div>
+            <el-button size="small" @click="addRow(srv,b.svc)">添加一行</el-button>
+          </template>
+        </div>
       </el-card>
     </template>
 
@@ -57,7 +56,7 @@ import { ref, inject, onMounted, reactive } from 'vue';
 import { ElMessage } from 'element-plus';
 import { cmdInvoke } from '@/utils/command';
 import { useScanConfigDb } from '@/database/scanConfig';
-import { DEFAULT_SERVICE_KEYWORDS, matchServices, SERVICE_NAMES, deriveAnchors } from './wizardTypes';
+import { DEFAULT_SERVICE_KEYWORDS, matchServices, SERVICE_NAMES, deriveAnchors, diffScanTargets, rematchAll } from './wizardTypes';
 import type { WizardDraft, RemoteServiceVo, ServiceName, ServerScanStatus, WizardServer } from './wizardTypes';
 
 const draft = inject<WizardDraft>('wizardDraft')!;
@@ -93,12 +92,24 @@ async function loadKeywords(){
   }catch{}
   initKeywordEdit();
 }
-onMounted(async ()=>{ await loadKeywords(); if(Object.keys(draft.scanResults).length===0) doScan(); });
+onMounted(async ()=>{
+  await loadKeywords();
+  const { toScan, toRemove } = diffScanTargets(draft.servers, Object.keys(draft.scanResults));
+  for(const k of toRemove){
+    delete draft.scanResults[k];
+    delete draft.scanCandidates[k];
+    delete draft.rawEnumerated[k];
+    delete draft.probedWpf[k];
+    delete scanStatus.value[k];
+  }
+  if(toScan.length>0) await doScan(toScan);
+});
 
-async function doScan(){
-  for(const s of draft.servers) scanStatus.value[`${s.ip}:${s.port}`] = 'pending';
+async function doScan(target?: WizardServer[]){
+  const list = target ?? draft.servers;
+  for(const s of list) scanStatus.value[`${s.ip}:${s.port}`] = 'pending';
   scanning.value = true;
-  const queue = [...draft.servers];
+  const queue = [...list];
   const workers = Array.from({ length: Math.min(SCAN_CONCURRENCY, queue.length) }, () => (async () => {
     while (queue.length > 0) {
       const s = queue.shift()!;
@@ -136,6 +147,7 @@ async function scanOne(s: WizardServer){
     const dirs = r2.data as { name:string; path:string }[];
     enumerated = dirs.map(d=>({ name:d.name, display_name:d.name, exec_dir:d.path, source:'service' }));
   }
+  draft.rawEnumerated[key] = enumerated;
   const { matched, candidates } = matchServices(enumerated, keywords.value);
   draft.scanResults[key] = matched;
   draft.scanCandidates[key] = candidates as any;
@@ -159,8 +171,9 @@ async function probeWpfClient(s: WizardServer, key: string, services: RemoteServ
     if(r.code!==0 || !Array.isArray(r.data)) return;
     const hits = r.data as string[];
     if(hits.length===0) return;
+    draft.probedWpf[key] = hits[0];
     if(!draft.scanCandidates[key]) draft.scanCandidates[key] = {};
-    (draft.scanResults[key] as any).wpfClient = hits[0];
+    (draft.scanResults[key] as any).wpfClient = [hits[0]];
     if(hits.length>1) (draft.scanCandidates[key] as any).wpfClient = hits.slice(1);
   }catch(e){
     console.warn('wpfClient 探测失败', key, e);
@@ -192,29 +205,64 @@ async function deepScanWpf(s: WizardServer){
   }
 }
 
-function rowsFor(srv:any){
+interface SvcBlock {
+  svc: ServiceName;
+  paths: string[];
+  /** 无识别结果时也渲染一行空输入，便于手填 */
+  displayPaths: string[];
+  count: number;
+  status: string;
+  candidates: string[];
+}
+function blocksFor(srv:any): SvcBlock[]{
   const key = `${srv.ip}:${srv.port}`;
   const matched = draft.scanResults[key] ?? {};
   const cands = draft.scanCandidates[key] ?? {};
   return SERVICE_NAMES.map(svc=>{
-    const path = (matched as any)[svc] ?? '';
-    const candidates = (cands as any)[svc] ?? [];
+    const paths = ((matched as any)[svc] ?? []) as string[];
+    const candidates = ((cands as any)[svc] ?? []) as string[];
+    const count = paths.filter((p)=>p.trim()).length;
     let status = 'unmatched';
-    if(path) status='matched';
+    if(count>0) status='matched';
     else if(candidates.length>0) status='candidate';
-    return { service: svc, path, candidates, status, svc };
+    return { svc, paths, displayPaths: paths.length>0 ? paths : [''], count, status, candidates };
   });
 }
-function onPathChange(srv:any, row:any){
+/** 取（必要时初始化）某服务器某服务的节点路径数组，所有行级写操作经此入口保证父对象存在 */
+function ensurePaths(srv:any, svc: ServiceName): string[]{
   const key = `${srv.ip}:${srv.port}`;
-  if(!draft.scanResults[key]) draft.scanResults[key]={} as any;
-  (draft.scanResults[key] as any)[row.svc]=row.path;
+  if(!draft.scanResults[key]) draft.scanResults[key] = {} as any;
+  const holder = draft.scanResults[key] as any;
+  if(!Array.isArray(holder[svc])) holder[svc] = [];
+  return holder[svc];
+}
+function markManual(srv:any, svc: ServiceName){
+  const key = `${srv.ip}:${srv.port}`;
+  const manual = draft.manualPaths[key] ?? (draft.manualPaths[key] = []);
+  if(!manual.includes(svc)) manual.push(svc);
+}
+function onRowPathChange(srv:any, svc: ServiceName, idx:number, val:string){
+  ensurePaths(srv, svc)[idx] = val ?? '';
+  markManual(srv, svc);
+}
+function removeRow(srv:any, svc: ServiceName, idx:number){
+  ensurePaths(srv, svc).splice(idx,1);
+  markManual(srv, svc);
+}
+function addRow(srv:any, svc: ServiceName){
+  ensurePaths(srv, svc).push('');
+  markManual(srv, svc);
+}
+/** wpfClient 单目标：整组替换为选中值 */
+function onWpfPathChange(srv:any, val:string){
+  const arr = ensurePaths(srv, 'wpfClient');
+  arr.splice(0, arr.length, val ?? '');
+  markManual(srv, 'wpfClient');
 }
 async function onSaveKeywords(){
-  const newKw: Record<string,string[]> = {};
-  for(const s of SERVICE_NAMES){ newKw[s] = keywordEdit[s].split(',').map(x=>x.trim()).filter(Boolean); }
+  const newKw: Record<ServiceName,string[]> = {} as Record<ServiceName,string[]>;
+  for(const s of SERVICE_NAMES){ newKw[s] = keywordEdit[s].split(/[,，]/).map(x=>x.trim()).filter(Boolean); }
   keywords.value = newKw as any;
-  // persist
   try{
     const cfg = await scanDb.getDefaultScanConfig();
     const row = cfg.data;
@@ -224,10 +272,18 @@ async function onSaveKeywords(){
       await scanDb.upsertScanConfig({ name:'default', excludePatterns:'[]', includePatterns:'[]', excludeSystemDirs:1, excludeHiddenDirs:1, isGlobal:1, projectId:null, serviceKeywords: JSON.stringify(newKw) } as any);
     }
   }catch(e){ console.warn(e); }
-  // re-match already scanned data in memory not needed; re-scan
   keywordVisible.value=false;
-  ElMessage.success('已保存，将重新匹配');
-  // re-apply matching on existing scanResults? simplest: clear and rescan or reapply on last raw? We'll just keep paths but future scans will use new kw
+  const { scanResults, scanCandidates } = rematchAll({
+    rawEnumerated: draft.rawEnumerated,
+    keywords: newKw,
+    manualPaths: draft.manualPaths,
+    probedWpf: draft.probedWpf,
+    prevScanResults: draft.scanResults,
+    prevScanCandidates: draft.scanCandidates,
+  });
+  draft.scanResults = scanResults;
+  draft.scanCandidates = scanCandidates;
+  ElMessage.success('已保存，已重新匹配');
 }
 
 async function validate(): Promise<boolean>{ return true; }

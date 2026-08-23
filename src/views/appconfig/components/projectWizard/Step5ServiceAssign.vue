@@ -36,17 +36,29 @@ import type { WizardDraft } from './wizardTypes';
 const props = defineProps<{ currentEnv: number }>();
 const draft = inject<WizardDraft>('wizardDraft')!;
 const envServices = computed(()=> draft.envConfig[props.currentEnv]?.services ?? []);
+/** 选定服务器后自动带入该服务器的全部识别节点：当前行（路径为空时）填首个未占用节点，
+ *  其余节点按识别顺序追加新行；已存在的路径跨行去重不重复带入，用户手填的行不覆盖；
+ *  改选服务器时同样适用（旧路径保留，新服务器节点多退少补） */
 function onServerChange(t:any, svc:any){
+  const paths = ((draft.scanResults[t.serverKey] as any)?.[svc.name] ?? []) as string[];
+  if(paths.length===0) return;
   if(!t.path){
-    const v = (draft.scanResults[t.serverKey] as any)?.[svc.name];
-    if(v) t.path=v;
+    const used = new Set(svc.targets.map((x:any)=>x.path).filter(Boolean));
+    const next = paths.find(p=>p && !used.has(p));
+    if(next) t.path=next;
+  }
+  const used = new Set(svc.targets.map((x:any)=>x.path).filter(Boolean));
+  for(const p of paths){
+    if(p && !used.has(p)) svc.targets.push({ serverKey: t.serverKey, path: p });
   }
 }
 function onWpfServerChange(val:string, svc:any){
   if(!svc.targets[0]) svc.targets=[{ serverKey:val, path:'' }];
   else svc.targets[0].serverKey=val;
-  const p = (draft.scanResults[val] as any)?.[svc.name];
-  if(p && !svc.targets[0].path) svc.targets[0].path=p;
+  if(!svc.targets[0].path){
+    const p = (((draft.scanResults[val] as any)?.[svc.name] ?? []) as string[])[0];
+    if(p) svc.targets[0].path=p;
+  }
 }
 function onWpfPathChange(val:string, svc:any){
   if(!svc.targets[0]) svc.targets=[{ serverKey:'', path:val }];
