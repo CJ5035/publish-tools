@@ -112,7 +112,12 @@ async function onNext() {
   // 段2循环：S6提交后要么进入下一环境S5，要么到总结
   if (stepIndex.value === 5) {
     // 记录本环境结果（由 Step6Confirm.validate 内落库，失败会返回 false 已拦截）
-    summaryRows.value.push({ env: displayEnv(currentEnv.value), status: '成功', msg: '' });
+    const mode = (s6Ref.value?.saveMode ?? 'insert') as 'insert' | 'update';
+    summaryRows.value.push({
+      env: displayEnv(currentEnv.value),
+      status: t(`message.appconfig.wizard.${mode === 'update' ? 'summaryUpdate' : 'summaryInsert'}`),
+      msg: '',
+    });
     if (hasNextEnv.value) {
       currentEnvIndex.value++;
       stepIndex.value = 4;

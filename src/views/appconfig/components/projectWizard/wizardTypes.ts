@@ -214,6 +214,44 @@ export function diffScanTargets(
 
 export type ServerScanStatus = 'pending' | 'scanning' | 'done' | 'failed';
 
+/** 更新模式合并：向导管理项以向导本次结果为准（覆盖），向导硬编码默认值/不管理的字段保留用户已有配置。
+ *  行级保留字段（msBuildPath/dllMode/dllModeValue）不在本函数，由 Step6Confirm 在 update 分支处理。
+ *  generateDirJson：已有非空且版本未变 → 保留用户自定义；版本变化 → 向导按 isNewVersion 推导。
+ *  注意：普通服务逐字段显式展开而非 for-in-NORMAL_SERVICES 循环赋值——循环变量类型是 ServiceName
+ *  （含 wpfClient），TS 3.5+ 对联合键写入 `merged[svc] = ...` 要求可赋给交集类型，
+ *  WpfClientConfigType 的必填字段（serverId/isCompress 等）会让普通服务对象报 TS2345。 */
+export function mergeConfigItems(
+  existing: ConfigItemsType | null | undefined,
+  wizardItems: ConfigItemsType
+): ConfigItemsType {
+  if (!existing) return wizardItems;
+  const keepServerPath = <T extends CommonAppconfigType>(ex: T | undefined, wz: T): T => ({
+    ...wz,
+    serverPath: ex?.serverPath ? ex.serverPath : wz.serverPath,
+  });
+  const merged: ConfigItemsType = {
+    ...wizardItems,
+    isRebuild: existing.isRebuild ?? wizardItems.isRebuild,
+    isBackup: existing.isBackup ?? wizardItems.isBackup,
+    backupBasePath: existing.backupBasePath ?? wizardItems.backupBasePath ?? null,
+    isNewVersion: wizardItems.isNewVersion,
+    webApiHost: keepServerPath(existing.webApiHost, wizardItems.webApiHost),
+    webClient: keepServerPath(existing.webClient, wizardItems.webClient),
+    scheduleServer: keepServerPath(existing.scheduleServer, wizardItems.scheduleServer),
+    spcMonitor: keepServerPath(existing.spcMonitor, wizardItems.spcMonitor),
+  };
+  const exWpf = existing.wpfClient;
+  const wzWpf = wizardItems.wpfClient;
+  const sameVersion = existing.isNewVersion === wizardItems.isNewVersion;
+  merged.wpfClient = {
+    ...wzWpf,
+    isCompress: exWpf?.isCompress ?? wzWpf.isCompress,
+    generateDirJson: sameVersion && exWpf?.generateDirJson ? exWpf.generateDirJson : wzWpf.generateDirJson,
+    compressFileJson: exWpf?.compressFileJson ? exWpf.compressFileJson : wzWpf.compressFileJson,
+  };
+  return merged;
+}
+
 const LINUX_SUBTREE_BLACKLIST = new Set([
   'usr', 'etc', 'bin', 'sbin', 'run', 'boot', 'dev', 'proc', 'sys', 'lib', 'lib64', 'snap',
 ]);

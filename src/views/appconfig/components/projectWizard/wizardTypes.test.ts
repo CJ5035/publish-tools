@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveAnchors, diffScanTargets, matchServices, rematchAll } from './wizardTypes';
+import { deriveAnchors, diffScanTargets, matchServices, rematchAll, mergeConfigItems } from './wizardTypes';
 import type { WizardServer, RemoteServiceVo } from './wizardTypes';
 
 describe('deriveAnchors', () => {
@@ -180,5 +180,76 @@ describe('rematchAll', () => {
       prevScanResults: { '8.8.8.8:22': { webApiHost: ['/manual/only'] } }, prevScanCandidates: {},
     });
     expect(r.scanResults['8.8.8.8:22']?.webApiHost).toEqual(['/manual/only']);
+  });
+});
+
+const wizItems = (): ConfigItemsType => ({
+  webApiHost: { clientPath: 'C:/new/WebApiHost', serverPath: '', serverIds: [7], serverArr: [{ id: 7, name: 's7', serverPathArr: [{ label: '', value: [{ identity: '1.1.1.1:22', path: '/srv/api' }] }] }] },
+  webClient: { clientPath: 'C:/new/WebClient', serverPath: '', serverIds: [], serverArr: [] },
+  scheduleServer: { clientPath: 'C:/new/ScheduleServer', serverPath: '', serverIds: [], serverArr: [] },
+  spcMonitor: { clientPath: 'C:/new/SpcMonitor', serverPath: '', serverIds: [], serverArr: [] },
+  wpfClient: { clientPath: 'C:/new/WpfClient', serverPath: '', serverIds: [], serverArr: [], serverId: 7, serverName: 's7', isCompress: 1, generateDirJson: '["Plugins"]', compressFileJson: '' },
+  isRebuild: 1,
+  isBackup: 0,
+  isNewVersion: true,
+  backupBasePath: null,
+});
+
+const existItems = (): ConfigItemsType => ({
+  webApiHost: { clientPath: 'C:/old/WebApiHost', serverPath: '/srv/api-old', serverIds: [9], serverArr: [{ id: 9, name: 's9', serverPathArr: [{ label: '', value: [{ identity: '9.9.9.9:22', path: '/old' }] }] }] },
+  webClient: { clientPath: 'C:/old/WebClient', serverPath: '', serverIds: [], serverArr: [] },
+  scheduleServer: { clientPath: 'C:/old/ScheduleServer', serverPath: '', serverIds: [], serverArr: [] },
+  spcMonitor: { clientPath: 'C:/old/SpcMonitor', serverPath: '', serverIds: [], serverArr: [] },
+  wpfClient: { clientPath: 'C:/old/WpfClient', serverPath: '/srv/wpf-old', serverIds: [], serverArr: [], serverId: 9, serverName: 's9', isCompress: 0, generateDirJson: '["Domain","UI"]', compressFileJson: '["a.zip"]' },
+  isRebuild: 0,
+  isBackup: 1,
+  isNewVersion: false,
+  backupBasePath: '/backup/base',
+});
+
+describe('mergeConfigItems', () => {
+  it('existing 为空：原样返回向导 items', () => {
+    const w = wizItems();
+    expect(mergeConfigItems(null, w)).toBe(w);
+    expect(mergeConfigItems(undefined, w)).toBe(w);
+  });
+  it('保留用户手工设置：isRebuild/isBackup/backupBasePath 取已有值', () => {
+    const m = mergeConfigItems(existItems(), wizItems());
+    expect(m.isRebuild).toBe(0);
+    expect(m.isBackup).toBe(1);
+    expect(m.backupBasePath).toBe('/backup/base');
+  });
+  it('覆盖向导管理项：isNewVersion、clientPath、serverIds/serverArr 用向导值', () => {
+    const m = mergeConfigItems(existItems(), wizItems());
+    expect(m.isNewVersion).toBe(true);
+    expect(m.webApiHost.clientPath).toBe('C:/new/WebApiHost');
+    expect(m.webApiHost.serverIds).toEqual([7]);
+    expect(m.webApiHost.serverArr[0].id).toBe(7);
+    expect(m.wpfClient.clientPath).toBe('C:/new/WpfClient');
+  });
+  it('普通服务 serverPath 已有非空保留，为空串则用向导值', () => {
+    const m = mergeConfigItems(existItems(), wizItems());
+    expect(m.webApiHost.serverPath).toBe('/srv/api-old');
+    expect(m.webClient.serverPath).toBe('');
+  });
+  it('wpfClient：目标三项覆盖，isCompress/compressFileJson 保留已有', () => {
+    const m = mergeConfigItems(existItems(), wizItems());
+    expect(m.wpfClient.serverId).toBe(7);
+    expect(m.wpfClient.serverName).toBe('s7');
+    expect(m.wpfClient.serverPath).toBe('');
+    expect(m.wpfClient.isCompress).toBe(0);
+    expect(m.wpfClient.compressFileJson).toBe('["a.zip"]');
+  });
+  it('generateDirJson：版本一致且已有非空保留；版本变化用向导推导值', () => {
+    const sameVer = mergeConfigItems({ ...existItems(), isNewVersion: true } as ConfigItemsType, wizItems());
+    expect(sameVer.wpfClient.generateDirJson).toBe('["Domain","UI"]');
+    const diffVer = mergeConfigItems(existItems(), wizItems());
+    expect(diffVer.wpfClient.generateDirJson).toBe('["Plugins"]');
+  });
+  it('wpfClient 子字段缺失（存量数据）不抛错且回退向导默认', () => {
+    const partial = { ...existItems(), wpfClient: { clientPath: 'C:/old/WpfClient' } as any } as ConfigItemsType;
+    const m = mergeConfigItems(partial, wizItems());
+    expect(m.wpfClient.isCompress).toBe(1);
+    expect(m.wpfClient.generateDirJson).toBe('["Plugins"]');
   });
 });

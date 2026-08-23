@@ -13,6 +13,8 @@ export default {
       submit: 'Submit',
       nextEnv: 'Next Env',
       finish: 'Finish',
+      summaryInsert: 'Created',
+      summaryUpdate: 'Updated',
       steps: {
         project: 'Project',
         servers: 'Servers',
@@ -72,7 +74,10 @@ export default {
         wpfOnlyOne: 'wpfClient allows only 1 target',
       },
       confirm: {
-        dup: 'Environment already configured',
+        dupHint: 'This environment already has a config. Submitting will merge-update: service assignments and client paths are overwritten, while MSBuild, DLL mode, backup and other existing settings are preserved',
+        dupConfirmTitle: 'Update Confirmation',
+        dupConfirmMsg: 'This environment already has a config. Service assignments and client paths will be updated, while MSBuild, DLL mode, backup and other existing settings are preserved. Continue?',
+        dupConfirmOk: 'Update & Overwrite',
         saveFail: 'Save failed',
       },
     },

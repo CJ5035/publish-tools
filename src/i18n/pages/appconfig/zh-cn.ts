@@ -13,6 +13,8 @@ export default {
       submit: '提交',
       nextEnv: '下一步环境',
       finish: '完成',
+      summaryInsert: '新增成功',
+      summaryUpdate: '更新成功',
       steps: {
         project: '项目信息',
         servers: '服务器',
@@ -72,7 +74,10 @@ export default {
         wpfOnlyOne: 'wpfClient 仅允许 1 个目标',
       },
       confirm: {
-        dup: '该环境已有配置，请使用编辑功能',
+        dupHint: '该环境已有配置，提交时将合并更新：覆盖服务分配与客户端路径，保留 MSBuild、取 DLL 方式、备份等已有设置',
+        dupConfirmTitle: '更新确认',
+        dupConfirmMsg: '该环境已有配置，将更新服务分配与客户端路径，并保留 MSBuild、取 DLL 方式、备份等已有设置。是否继续？',
+        dupConfirmOk: '更新覆盖',
         saveFail: '落库失败',
       },
     },
