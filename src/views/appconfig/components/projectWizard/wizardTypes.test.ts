@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { deriveAnchors, diffScanTargets, matchServices, rematchAll, mergeConfigItems } from './wizardTypes';
-import type { WizardServer, RemoteServiceVo } from './wizardTypes';
+import { deriveAnchors, diffScanTargets, matchServices, rematchAll, mergeConfigItems, serializeDraft, restoreDraft, createEmptyDraft } from './wizardTypes';
+import type { WizardServer, RemoteServiceVo, WizardDraft, StoredWizardDraft } from './wizardTypes';
+// satisfy noUnusedLocals (brief requires these type imports; reference them so vue-tsc passes)
+const _typeCheck: WizardDraft | StoredWizardDraft | null = null;
+void _typeCheck;
 
 describe('deriveAnchors', () => {
   it('linux: 取父目录，多服务同父去重，仅 1 段的根被深度过滤', () => {
@@ -251,5 +254,42 @@ describe('mergeConfigItems', () => {
     const m = mergeConfigItems(partial, wizItems());
     expect(m.wpfClient.isCompress).toBe(1);
     expect(m.wpfClient.generateDirJson).toBe('["Plugins"]');
+  });
+});
+
+describe('draft 持久化', () => {
+  it('createEmptyDraft 含 s1Mode 默认（新建模式、未选项目）', () => {
+    expect(createEmptyDraft().s1Mode).toEqual({ projectMode: 'new', selectedProjectId: null });
+  });
+
+  it('serialize → restore 往返：字段逐一保留（含 pwd 明文与 savedAt）', () => {
+    const d = createEmptyDraft();
+    d.s1Mode = { projectMode: 'existing', selectedProjectId: 3 };
+    d.project.slnPath = 'D:/repo/a.sln';
+    d.servers.push({ name: 's1', os: 2, ip: '1.1.1.1', port: 22, account: 'root', pwd: 'secret', scanRoot: '', isNew: true });
+    const stored = serializeDraft(d, 2, 0, false, [{ env: 'Dev', status: '新增成功', msg: '' }], 1724500000000);
+    const restored = restoreDraft(JSON.parse(JSON.stringify(stored)));
+    expect(restored).not.toBeNull();
+    expect(restored!.savedAt).toBe(1724500000000);
+    expect(restored!.stepIndex).toBe(2);
+    expect(restored!.isSummary).toBe(false);
+    expect(restored!.draft.s1Mode.projectMode).toBe('existing');
+    expect(restored!.draft.servers[0].pwd).toBe('secret');
+  });
+
+  it('restoreDraft 对非法输入返回 null', () => {
+    expect(restoreDraft(null)).toBeNull();
+    expect(restoreDraft(undefined)).toBeNull();
+    expect(restoreDraft('x')).toBeNull();
+    expect(restoreDraft({})).toBeNull();
+    expect(restoreDraft({ draft: {} })).toBeNull();
+    expect(restoreDraft({ draft: { servers: 'no' } })).toBeNull();
+  });
+
+  it('isSummary 草稿：summaryRows 随草稿保留（恢复直达总结页）', () => {
+    const stored = serializeDraft(createEmptyDraft(), 5, 1, true, [{ env: 'Uat', status: '更新成功', msg: '' }], 1);
+    const restored = restoreDraft(stored);
+    expect(restored!.isSummary).toBe(true);
+    expect(restored!.summaryRows).toEqual([{ env: 'Uat', status: '更新成功', msg: '' }]);
   });
 });

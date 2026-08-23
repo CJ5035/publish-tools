@@ -1,5 +1,8 @@
 <template>
   <div>
+    <el-alert v-if="importedCount > 0" type="info" :closable="false" show-icon style="margin-bottom:12px;">
+      {{ t('message.appconfig.wizard.importedHint', { n: importedCount }) }}
+    </el-alert>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <el-button type="primary" @click="onAdd">添加服务器</el-button>
       <el-button @click="onImport">从已有导入</el-button>
@@ -54,14 +57,37 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, inject } from 'vue';
+import { ref, inject, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { useI18n } from 'vue-i18n';
 import { cmdInvoke } from '@/utils/command';
 import { useServerDb } from '@/database/servers';
 import type { WizardDraft, WizardServer } from './wizardTypes';
 
+const { t } = useI18n();
+
 const draft = inject<WizardDraft>('wizardDraft')!;
 const serverDb = useServerDb();
+
+const importedCount = ref(0);
+
+/** 项 6 续配：S1 选了已有项目且池为空时，自动带入该项目全部服务器（isNew:false 保留原 id，
+ *  落库语义不变）；二期不含 isWpfServer 回勾（三期）。 */
+onMounted(async () => {
+  if (!draft.project.id || draft.servers.length > 0) return;
+  try {
+    const r = await serverDb.getServerList({ projectId: draft.project.id, name: null, sorting: 'ts.id DESC', skipCount: 0, maxResultCount: 1000 } as any);
+    const rows = ((r.data as any)?.data ?? []) as RowServerType[];
+    for (const s of rows) {
+      const key = `${s.ip}:${s.port}`;
+      if (draft.servers.some((x) => `${x.ip}:${x.port}` === key)) continue;
+      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false });
+    }
+    importedCount.value = draft.servers.length;
+  } catch (e) {
+    console.warn('自动带入服务器失败', e);
+  }
+});
 
 const importVisible = ref(false);
 const importList = ref<RowServerType[]>([]);

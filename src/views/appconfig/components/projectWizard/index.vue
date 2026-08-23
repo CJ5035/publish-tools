@@ -48,8 +48,9 @@
 import { ref, computed, provide, reactive } from 'vue';
 import { ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
-import { createEmptyDraft, displayEnv } from './wizardTypes';
-import type { WizardDraft } from './wizardTypes';
+import { Local } from '@/utils/storage';
+import { createEmptyDraft, displayEnv, serializeDraft, restoreDraft } from './wizardTypes';
+import type { WizardDraft, StoredWizardDraft } from './wizardTypes';
 import Step1Project from './Step1Project.vue';
 import Step2Servers from './Step2Servers.vue';
 import Step3Identify from './Step3Identify.vue';
@@ -79,6 +80,19 @@ const hasProgress = computed(() =>
   draft.envs.length > 0
 );
 
+const DRAFT_KEY = 'wizard:draft:v1';
+
+function persistDraft() {
+  if (!hasProgress.value) return;
+  try {
+    Local.set(DRAFT_KEY, serializeDraft(draft, stepIndex.value, currentEnvIndex.value, isSummary.value, summaryRows.value));
+  } catch (e) { console.warn('草稿写入失败', e); }
+}
+
+function clearDraft() {
+  try { Local.remove(DRAFT_KEY); } catch {}
+}
+
 const step5Title = computed(() => draft.envs.length ? `服务分配 (${displayEnv(currentEnv.value)})` : '服务分配');
 const step6Title = computed(() => draft.envs.length ? `确认 (${displayEnv(currentEnv.value)})` : '确认');
 
@@ -94,7 +108,31 @@ function currentValidateRef(): any {
   return map[stepIndex.value];
 }
 
-function open() {
+async function open() {
+  let stored: StoredWizardDraft | null = null;
+  try { stored = restoreDraft(Local.get(DRAFT_KEY)); } catch { stored = null; }
+  if (stored) {
+    try {
+      await ElMessageBox.confirm(
+        t('message.appconfig.wizard.resumeMsg', { time: new Date(stored.savedAt).toLocaleString() }),
+        t('message.appconfig.wizard.resumeTitle'),
+        {
+          type: 'info',
+          confirmButtonText: t('message.appconfig.wizard.resumeOk'),
+          cancelButtonText: t('message.appconfig.wizard.resumeRestart'),
+        }
+      );
+      Object.assign(draft, stored.draft);
+      stepIndex.value = stored.stepIndex;
+      currentEnvIndex.value = stored.currentEnvIndex;
+      isSummary.value = stored.isSummary;
+      summaryRows.value = stored.summaryRows ?? [];
+      visible.value = true;
+      return;
+    } catch {
+      clearDraft();
+    }
+  }
   Object.assign(draft, createEmptyDraft());
   stepIndex.value = 0;
   currentEnvIndex.value = 0;
@@ -121,43 +159,58 @@ async function onNext() {
     if (hasNextEnv.value) {
       currentEnvIndex.value++;
       stepIndex.value = 4;
+      persistDraft();
       return;
     } else {
       isSummary.value = true;
+      persistDraft();
       return;
     }
   }
   if (stepIndex.value < 5) stepIndex.value++;
+  persistDraft();
 }
 
 function onPrev() {
   if (isSummary.value) {
     isSummary.value = false;
+    persistDraft();
     return;
   }
   if (stepIndex.value === 4 && currentEnvIndex.value > 0) {
     // 在 S5 且不是首个环境：回退到上一环境的 S6
     currentEnvIndex.value--;
     stepIndex.value = 5;
+    persistDraft();
     return;
   }
   if (stepIndex.value > 0) stepIndex.value--;
+  persistDraft();
 }
 
 async function onCancel() {
-  if (hasProgress.value) {
-    try {
-      await ElMessageBox.confirm(t('message.appconfig.wizard.cancelConfirmMsg'), t('message.appconfig.wizard.cancelConfirmTitle'), {
+  if (!hasProgress.value) { visible.value = false; return; }
+  try {
+    await ElMessageBox.confirm(
+      t('message.appconfig.wizard.cancelExitMsg'),
+      t('message.appconfig.wizard.cancelConfirmTitle'),
+      {
         type: 'warning',
-        confirmButtonText: t('message.appconfig.wizard.confirmAbandon'),
-        cancelButtonText: t('message.appconfig.wizard.keepEditing'),
-      });
-    } catch { return; }
+        distinguishCancelAndClose: true,
+        confirmButtonText: t('message.appconfig.wizard.cancelSaveExit'),
+        cancelButtonText: t('message.appconfig.wizard.cancelAbandon'),
+      }
+    );
+    persistDraft();
+    visible.value = false;
+  } catch (action) {
+    if (action === 'cancel') { clearDraft(); visible.value = false; }
+    // 'close'（右上角 × / Esc）→ 继续编辑，不关闭向导
   }
-  visible.value = false;
 }
 
 function onFinish() {
+  clearDraft();
   visible.value = false;
   emit('refresh');
 }

@@ -49,6 +49,8 @@ export interface WizardDraft {
   rawEnumerated: Record<string, RemoteServiceVo[]>;
   manualPaths: Record<string, ServiceName[]>;
   probedWpf: Record<string, string>;
+  /** S1 界面状态随草稿持久化（项 8）：否则断点恢复后回不到"已有项目"模式 */
+  s1Mode: { projectMode: 'existing' | 'new'; selectedProjectId: number | null };
   envs: number[];
   envConfig: Record<number, EnvConfig>;
 }
@@ -87,6 +89,7 @@ export function createEmptyDraft(): WizardDraft {
     rawEnumerated: {},
     manualPaths: {},
     probedWpf: {},
+    s1Mode: { projectMode: 'new', selectedProjectId: null },
     envs: [],
     envConfig: {},
   };
@@ -306,4 +309,42 @@ export function deriveAnchors(execDirs: string[], os: number, account?: string):
     push(`/home/${account.trim()}`);
   }
   return out;
+}
+
+export interface WizardSummaryRow {
+  env: string;
+  status: string;
+  msg: string;
+}
+
+/** 草稿持久化结构（localStorage `wizard:draft:v1`，pwd 明文落盘为用户已确认决策）。
+ *  结构对 draft 内部字段透明——draft 结构演进（如 d8979d0 的多节点 scanResults）无需改本函数。 */
+export interface StoredWizardDraft {
+  draft: WizardDraft;
+  stepIndex: number;
+  currentEnvIndex: number;
+  isSummary: boolean;
+  summaryRows: WizardSummaryRow[];
+  savedAt: number;
+}
+
+export function serializeDraft(
+  draft: WizardDraft,
+  stepIndex: number,
+  currentEnvIndex: number,
+  isSummary: boolean,
+  summaryRows: WizardSummaryRow[],
+  now: number = Date.now()
+): StoredWizardDraft {
+  return { draft, stepIndex, currentEnvIndex, isSummary, summaryRows, savedAt: now };
+}
+
+/** 结构校验：draft 必须是对象且 servers/envs 为数组；任何不符返回 null（含版本失效语义——结构大变换时自然解析失败） */
+export function restoreDraft(raw: unknown): StoredWizardDraft | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Partial<StoredWizardDraft>;
+  if (!s.draft || typeof s.draft !== 'object') return null;
+  if (!Array.isArray((s.draft as WizardDraft).servers)) return null;
+  if (!Array.isArray((s.draft as WizardDraft).envs)) return null;
+  return s as StoredWizardDraft;
 }

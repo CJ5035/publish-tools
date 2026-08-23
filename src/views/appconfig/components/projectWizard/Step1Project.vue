@@ -68,8 +68,14 @@ import type { WizardDraft, ServiceName } from './wizardTypes';
 const draft = inject<WizardDraft>('wizardDraft')!;
 const projectDb = useProjectDb();
 
-const projectMode = ref<'existing' | 'new'>('new');
-const selectedProjectId = ref<number | null>(null);
+const projectMode = computed<'existing' | 'new'>({
+  get: () => draft.s1Mode.projectMode,
+  set: (v) => { draft.s1Mode.projectMode = v; },
+});
+const selectedProjectId = computed<number | null>({
+  get: () => draft.s1Mode.selectedProjectId,
+  set: (v) => { draft.s1Mode.selectedProjectId = v; },
+});
 const projectList = ref<RowProjectType[]>([]);
 
 const clientPathRows = computed(() => {
