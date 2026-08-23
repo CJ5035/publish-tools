@@ -147,6 +147,10 @@ export default {
 		mcpStatusStopped: 'Stopped',
 		mcpStatusStarting: 'Starting',
 		mcpConfigSaved: 'MCP config saved. Restart the app to apply changes.',
+		msBuildPath: 'MsBuild Path',
+		msBuildPathPlaceholder: 'e.g. C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe',
+		msBuildPathTip: 'Global default MsBuild path, auto-filled when creating a project',
+		msBuildPathNotExistWarn: 'MsBuild path does not exist, please check',
 	},
 	about: {
 		title: 'About',

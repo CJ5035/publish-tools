@@ -36,6 +36,13 @@
           <el-input-number v-model="form.winUploadRetryInterval" :min="1" :max="60" :step="1" />
         </el-form-item>
 
+        <!-- MsBuild 路径 -->
+        <el-divider content-position="left">{{ $t('message.settings.msBuildPath') }}</el-divider>
+        <el-form-item :label="$t('message.settings.msBuildPath')">
+          <el-input v-model="form.msBuildPath" :placeholder="$t('message.settings.msBuildPathPlaceholder')" clearable maxlength="450" style="width: 420px" />
+          <span class="settings-tip">{{ $t('message.settings.msBuildPathTip') }}</span>
+        </el-form-item>
+
         <el-form-item>
           <el-button type="primary" :loading="saving" @click="onSave">{{ $t('message.settings.save') }}</el-button>
         </el-form-item>
@@ -47,11 +54,14 @@
 <script setup lang="ts" name="settings">
 import { reactive, ref, onMounted } from "vue";
 import { ElMessage, type FormInstance } from "element-plus";
+import { useI18n } from "vue-i18n";
 import { useSettingsDb } from "@/database/settings/index";
 import { defaultSettings } from "@/utils/publishSettings";
+import { cmdInvoke } from "@/utils/command";
 import mittBus from "@/utils/mitt";
 
 const settingsDb = useSettingsDb();
+const { t } = useI18n();
 const formRef = ref<FormInstance>();
 const loading = ref(false);
 const saving = ref(false);
@@ -75,6 +85,15 @@ const onSave = async () => {
   if (!validate()) {
     ElMessage.warning('重试次数需在 1-99 之间，间隔需在 1-60 之间');
     return;
+  }
+  const trimmed = (form.msBuildPath ?? '').trim();
+  if (trimmed) {
+    try {
+      const r = await cmdInvoke('exists', { path: trimmed });
+      if (r.code !== 0) {
+        ElMessage.warning(t('message.settings.msBuildPathNotExistWarn'));
+      }
+    } catch {}
   }
   saving.value = true;
   const r = await settingsDb.saveSettings(form);

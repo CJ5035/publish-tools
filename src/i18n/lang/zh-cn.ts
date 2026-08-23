@@ -147,6 +147,10 @@ export default {
 		mcpStatusStopped: '已停止',
 		mcpStatusStarting: '启动中',
 		mcpConfigSaved: 'MCP 配置已保存，重启应用后生效',
+		msBuildPath: 'MsBuild 路径',
+		msBuildPathPlaceholder: '例：C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe',
+		msBuildPathTip: '全局默认 MsBuild 路径，新建项目时自动填充',
+		msBuildPathNotExistWarn: 'MsBuild 路径不存在，请检查',
 	},
 	about: {
 		title: '关于',

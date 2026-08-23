@@ -147,6 +147,10 @@ export default {
 		mcpStatusStopped: '已停止',
 		mcpStatusStarting: '啟動中',
 		mcpConfigSaved: 'MCP 配置已儲存，重新啟動應用後生效',
+		msBuildPath: 'MsBuild 路徑',
+		msBuildPathPlaceholder: '例：C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe',
+		msBuildPathTip: '全域預設 MsBuild 路徑，新建專案時自動填入',
+		msBuildPathNotExistWarn: 'MsBuild 路徑不存在，請檢查',
 	},
 	about: {
 		title: '關於',
