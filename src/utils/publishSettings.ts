@@ -9,6 +9,7 @@ const _default: RowSettingsType = {
     winCopyRetryInterval: 2,
     winUploadRetryCount: 10,
     winUploadRetryInterval: 3,
+    msBuildPath: null,
     updateTime: '',
 };
 
