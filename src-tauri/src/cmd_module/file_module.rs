@@ -308,7 +308,7 @@ pub async fn scan_server_services(
     server_os: i64,
 ) -> Result<Vec<RemoteService>, String> {
     if server_os == 1 {
-        let ps = "powershell -NoProfile -Command \"Get-CimInstance Win32_Service | Select-Object Name,DisplayName,PathName | ConvertTo-Json -Compress\"";
+        let ps = "powershell -NoProfile -Command \"Get-CimInstance Win32_Service | Select-Object Name,DisplayName,PathName,StartMode | ConvertTo-Json -Compress\"";
         let output = remote_command(username, password, server, ps).await?;
         parse_win32_services(&output)
     } else if server_os == 2 {
@@ -316,6 +316,47 @@ pub async fn scan_server_services(
     } else {
         Err(format!("不支持的服务器系统类型: {}", server_os))
     }
+}
+
+/// 取可执行文件路径的父目录（去引号/首尾空白），无目录分隔符或父目录为空返回 None
+fn exe_parent_dir(exe: &str) -> Option<String> {
+    let idx = exe.rfind(|c| c == '\\' || c == '/')?;
+    let dir = exe[..idx]
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+    if dir.is_empty() {
+        None
+    } else {
+        Some(dir)
+    }
+}
+
+/// 从命令参数（引号感知分词）中取第一个 .dll 参数的父目录；无 .dll 参数或无分隔符返回 None
+fn dll_arg_parent_dir(args: &str) -> Option<String> {
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut tokens: Vec<String> = Vec::new();
+    for ch in args.chars() {
+        match ch {
+            '"' => in_quote = !in_quote,
+            c if c.is_whitespace() && !in_quote => {
+                if !cur.is_empty() {
+                    tokens.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    let dll = tokens
+        .iter()
+        .find(|t| t.to_ascii_lowercase().ends_with(".dll"))?;
+    exe_parent_dir(dll)
 }
 
 fn parse_win32_services(json: &str) -> Result<Vec<RemoteService>, String> {
@@ -340,6 +381,15 @@ fn parse_win32_services(json: &str) -> Result<Vec<RemoteService>, String> {
             .trim()
             .to_string();
         if name.is_empty() {
+            continue;
+        }
+        // 禁用（StartMode=Disabled）的服务多为下线实例/系统残留，跳过不参与识别
+        let start_mode = item
+            .get("StartMode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if start_mode.eq_ignore_ascii_case("disabled") {
             continue;
         }
         let display_name = item
@@ -369,18 +419,16 @@ fn parse_win32_services(json: &str) -> Result<Vec<RemoteService>, String> {
         let truncated = &path_name[..pos + 4];
         let truncated_trimmed = truncated.trim().trim_matches('"').trim();
         let truncated_trimmed = truncated_trimmed.trim_matches('\'').trim();
-        let Some(idx) = truncated_trimmed.rfind(|c| c == '\\' || c == '/') else {
+        // dotnet 宿主服务（PathName = ...\dotnet.exe D:\...\App.dll）真实部署目录在 dll 参数里；
+        // 若取 exe 自身目录（C:\Program Files\dotnet）会被前端系统目录过滤整体排除导致漏识别
+        let dir = if truncated_trimmed.to_ascii_lowercase().ends_with("dotnet.exe") {
+            dll_arg_parent_dir(&path_name[pos + 4..]).or_else(|| exe_parent_dir(truncated_trimmed))
+        } else {
+            exe_parent_dir(truncated_trimmed)
+        };
+        let Some(dir) = dir else {
             continue;
         };
-        let dir = truncated_trimmed[..idx]
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'')
-            .trim()
-            .to_string();
-        if dir.is_empty() {
-            continue;
-        }
         result.push(RemoteService {
             name: name.clone(),
             display_name,
@@ -392,12 +440,78 @@ fn parse_win32_services(json: &str) -> Result<Vec<RemoteService>, String> {
     Ok(result)
 }
 
+/// systemd ExecStart → 部署目录：取首个路径 token 的父目录；
+/// dotnet 宿主（ExecStart=/usr/bin/dotnet /opt/app/App.dll）改取首个 .dll 参数父目录，
+/// 否则目录落在 /usr/bin 会被前端系统目录过滤排除。
+fn resolve_linux_exec_dir(exec: &str) -> Option<String> {
+    let mut path_token: Option<String> = None;
+    for token in exec.split_whitespace() {
+        let t = token.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.starts_with('{') || t.starts_with('}') {
+            continue;
+        }
+        let cleaned = t.trim_matches(|c| c == '"' || c == '\'');
+        if cleaned.is_empty() {
+            continue;
+        }
+        if cleaned.starts_with('{') || cleaned.starts_with('}') {
+            continue;
+        }
+        path_token = Some(cleaned.to_string());
+        break;
+    }
+    let pt = path_token?;
+    let pt_trim = pt.trim().trim_matches('"').trim_matches('\'').trim();
+    if pt_trim.is_empty() {
+        return None;
+    }
+    let base_is_dotnet = pt_trim
+        .rsplit('/')
+        .next()
+        .is_some_and(|b| b.eq_ignore_ascii_case("dotnet"));
+    let src: String = if base_is_dotnet {
+        exec.split_whitespace()
+            .map(|t| t.trim_matches(|c| c == '"' || c == '\''))
+            .find(|t| t.to_ascii_lowercase().ends_with(".dll"))
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| pt_trim.to_string())
+    } else {
+        pt_trim.to_string()
+    };
+    let idx = src.rfind('/')?;
+    let dir = src[..idx].trim().to_string();
+    if dir.is_empty() {
+        None
+    } else {
+        Some(dir)
+    }
+}
+
+/// systemd 枚举行解析（unit|exec|enabled）：unit/exec 任一为空跳过；enabled=disabled 的下线单元跳过。
+/// enabled 段缺失（旧格式/查询失败）时不跳过，保持兼容。
+fn parse_systemd_line(line: &str) -> Option<(String, String)> {
+    let mut it = line.splitn(3, '|');
+    let unit = it.next()?.trim();
+    let exec = it.next()?.trim();
+    let enabled = it.next().unwrap_or("").trim();
+    if unit.is_empty() || exec.is_empty() {
+        return None;
+    }
+    if enabled.eq_ignore_ascii_case("disabled") {
+        return None;
+    }
+    Some((unit.to_string(), exec.to_string()))
+}
+
 async fn scan_linux_services(
     username: &str,
     password: &str,
     server: &str,
 ) -> Result<Vec<RemoteService>, String> {
-    let systemd_cmd = r#"systemctl list-units --type=service --all --no-pager --plain --no-legend | cut -d' ' -f1 | grep '\.service$' | while read u; do printf '%s|%s\n' "$u" "$(systemctl show "$u" -p ExecStart --value)"; done"#;
+    let systemd_cmd = r#"systemctl list-units --type=service --all --no-pager --plain --no-legend | cut -d' ' -f1 | grep '\.service$' | while read u; do printf '%s|%s|%s\n' "$u" "$(systemctl show "$u" -p ExecStart --value)" "$(systemctl is-enabled "$u" 2>/dev/null)"; done"#;
     let docker_cmd = "docker inspect -f '{{.Name}}|{{range .Mounts}}{{.Source}}>{{.Destination}};{{end}}' $(docker ps -q)";
     let mut results: Vec<RemoteService> = Vec::new();
 
@@ -408,47 +522,12 @@ async fn scan_linux_services(
                 if line.is_empty() {
                     continue;
                 }
-                let Some((unit, exec)) = line.split_once('|') else {
+                let Some((unit, exec)) = parse_systemd_line(line) else {
                     continue;
                 };
-                let unit = unit.trim();
-                let exec = exec.trim();
-                if unit.is_empty() || exec.is_empty() {
-                    continue;
-                }
-                let mut path_token: Option<String> = None;
-                for token in exec.split_whitespace() {
-                    let t = token.trim();
-                    if t.is_empty() {
-                        continue;
-                    }
-                    if t.starts_with('{') || t.starts_with('}') {
-                        continue;
-                    }
-                    let cleaned = t.trim_matches(|c| c == '"' || c == '\'');
-                    if cleaned.is_empty() {
-                        continue;
-                    }
-                    if cleaned.starts_with('{') || cleaned.starts_with('}') {
-                        continue;
-                    }
-                    path_token = Some(cleaned.to_string());
-                    break;
-                }
-                let Some(pt) = path_token else {
+                let Some(dir) = resolve_linux_exec_dir(&exec) else {
                     continue;
                 };
-                let pt_trim = pt.trim().trim_matches('"').trim_matches('\'').trim();
-                if pt_trim.is_empty() {
-                    continue;
-                }
-                let Some(idx) = pt_trim.rfind('/') else {
-                    continue;
-                };
-                let dir = pt_trim[..idx].trim().to_string();
-                if dir.is_empty() {
-                    continue;
-                }
                 results.push(RemoteService {
                     name: unit.to_string(),
                     display_name: unit.to_string(),
@@ -628,6 +707,103 @@ mod wpf_scan_tests {
         assert_eq!(
             parse_wpf_dir_lines("\n/data/app/WpfClient\n/data/app/WpfClient\n \nD:\\Smom\\Wpf\n"),
             vec!["/data/app/WpfClient", "D:\\Smom\\Wpf"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod service_exec_dir_tests {
+    use super::*;
+
+    fn win_service_json(path_name: &str) -> String {
+        // ConvertTo-Json -Compress 单对象输出
+        format!(r#"{{"Name":"SIE.WebApiHost$inst83","DisplayName":"inst83","PathName":"{}"}}"#, path_name.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
+    #[test]
+    fn win_dotnet_hosted_takes_dll_parent_dir() {
+        let out = parse_win32_services(
+            &win_service_json(r#""C:\Program Files\dotnet\dotnet.exe" D:\EIS\SIT\Core83\WebApiHost\SIE.WebApiHost.dll"#),
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].exec_dir, r"D:\EIS\SIT\Core83\WebApiHost");
+    }
+
+    #[test]
+    fn win_dotnet_hosted_without_dll_arg_falls_back_to_exe_dir() {
+        let out = parse_win32_services(
+            &win_service_json(r#""C:\Program Files\dotnet\dotnet.exe""#),
+        )
+        .unwrap();
+        assert_eq!(out[0].exec_dir, r"C:\Program Files\dotnet");
+    }
+
+    #[test]
+    fn win_plain_exe_takes_own_parent_dir() {
+        let out = parse_win32_services(
+            &win_service_json(r#""D:\SMOM8.3\Publish\WebApiHost8031\SIE.WebApiHost.exe" --args"#),
+        )
+        .unwrap();
+        assert_eq!(out[0].exec_dir, r"D:\SMOM8.3\Publish\WebApiHost8031");
+    }
+
+    #[test]
+    fn win_svchost_still_resolves_to_system32() {
+        let out = parse_win32_services(&win_service_json(r"C:\Windows\system32\svchost.exe -k netsvcs")).unwrap();
+        assert_eq!(out[0].exec_dir, r"C:\Windows\system32");
+    }
+
+    #[test]
+    fn linux_plain_exec_takes_parent() {
+        assert_eq!(
+            resolve_linux_exec_dir("/opt/app/svc --flag"),
+            Some("/opt/app".to_string())
+        );
+    }
+
+    #[test]
+    fn linux_dotnet_hosted_takes_dll_parent() {
+        assert_eq!(
+            resolve_linux_exec_dir("/usr/bin/dotnet /opt/app/SIE.WebApiHost.dll"),
+            Some("/opt/app".to_string())
+        );
+    }
+
+    #[test]
+    fn linux_no_separator_returns_none() {
+        assert_eq!(resolve_linux_exec_dir("svc"), None);
+    }
+
+    #[test]
+    fn win_disabled_service_skipped() {
+        let json = r#"{"Name":"SIE.WebApiHost$old_inst","DisplayName":"old","PathName":"D:\\old\\SIE.WebApiHost.exe","StartMode":"Disabled"}"#;
+        assert!(parse_win32_services(json).unwrap().is_empty());
+    }
+
+    #[test]
+    fn win_auto_service_kept() {
+        let json = r#"{"Name":"SIE.WebApiHost$inst83","DisplayName":"inst83","PathName":"D:\\EIS\\Core83\\SIE.WebApiHost.exe","StartMode":"Auto"}"#;
+        let out = parse_win32_services(json).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].exec_dir, r"D:\EIS\Core83");
+    }
+
+    #[test]
+    fn linux_disabled_unit_skipped() {
+        assert_eq!(parse_systemd_line("svc.service|/opt/app/svc|disabled"), None);
+    }
+
+    #[test]
+    fn linux_enabled_unit_parsed_and_missing_state_kept() {
+        assert_eq!(
+            parse_systemd_line("svc.service|/opt/app/svc|enabled"),
+            Some(("svc.service".to_string(), "/opt/app/svc".to_string()))
+        );
+        // enabled 段缺失（旧格式）不跳过
+        assert_eq!(
+            parse_systemd_line("svc.service|/opt/app/svc"),
+            Some(("svc.service".to_string(), "/opt/app/svc".to_string()))
         );
     }
 }
@@ -2460,4 +2636,147 @@ pub async fn read_dlls_by_name(dir: &str, patterns: &str) -> Result<Vec<String>,
         }
     }
     Ok(dll_files)
+}
+
+/// 按精确文件名清单从源目录复制 DLL 到目标目录（合并模式，不删目标）
+///
+/// # 参数
+/// - `source` - 源目录
+/// - `file_names` - 要复制的文件名清单（仅文件名，含 .dll 后缀）
+/// - `destination` - 目标目录
+///
+/// # 返回值
+/// - `Ok(u32)` 成功复制的文件数；源中不存在的名字跳过不报错
+/// - `Err(String)` 失败（如源目录不存在或目标目录创建失败）
+#[tauri::command]
+pub async fn copy_dll_files_by_names(
+    source: &str,
+    file_names: Vec<String>,
+    destination: &str,
+) -> Result<u32, String> {
+    let src_dir = Path::new(source);
+    let dst_dir = Path::new(destination);
+
+    if !src_dir.exists() {
+        return Err(format!("源目录不存在: {}", source));
+    }
+
+    // 创建目标目录（不删除既有内容）
+    fs::create_dir_all(dst_dir).map_err(|e| format!("无法创建目标目录 {:?}: {}", dst_dir, e))?;
+
+    let mut copied: u32 = 0;
+    for name in file_names {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // 仅处理 .dll 后缀（不区分大小写），与既有命令一致
+        if !trimmed.to_lowercase().ends_with(".dll") {
+            continue;
+        }
+        // 防止路径穿越：只取文件名部分
+        let file_name = Path::new(trimmed)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(trimmed);
+        let src_file = src_dir.join(file_name);
+        if !src_file.is_file() {
+            continue;
+        }
+        let dst_file = dst_dir.join(file_name);
+        fs::copy(&src_file, &dst_file)
+            .map_err(|e| format!("复制文件 {:?} 到 {:?} 失败: {}", src_file, dst_file, e))?;
+        copied += 1;
+    }
+
+    Ok(copied)
+}
+
+#[cfg(test)]
+mod copy_dll_files_by_names_tests {
+    use super::*;
+    use std::fs;
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        p.push(format!("{}_{}_{}", prefix, std::process::id(), nanos));
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[tokio::test]
+    async fn copy_by_names_copies_exact_and_skips_missing() {
+        let src = unique_temp_dir("copy_by_names_src");
+        let dst = unique_temp_dir("copy_by_names_dst");
+
+        // 建 3 个 dll + 1 个非 dll
+        for name in ["a.dll", "b.dll", "c.dll", "readme.txt"] {
+            fs::write(src.join(name), format!("content-{}", name)).unwrap();
+        }
+
+        // 按名复制 2 个，断言目标只有 2 个且计数为 2
+        let count = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["a.dll".into(), "b.dll".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
+        let mut files: Vec<String> = fs::read_dir(&dst)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        files.sort();
+        assert_eq!(files, vec!["a.dll", "b.dll"]);
+
+        // 传入不存在名字断言跳过不报错，计数为 0
+        let count2 = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["not_exist.dll".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count2, 0);
+
+        // 非 dll 应被跳过
+        let count3 = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["readme.txt".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count3, 0);
+
+        // 清理
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dst);
+    }
+
+    #[tokio::test]
+    async fn copy_by_names_case_insensitive_extension() {
+        let src = unique_temp_dir("copy_by_names_case_src");
+        let dst = unique_temp_dir("copy_by_names_case_dst");
+
+        fs::write(src.join("Mixed.DLL"), "x").unwrap();
+
+        let count = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["Mixed.DLL".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dst);
+    }
 }

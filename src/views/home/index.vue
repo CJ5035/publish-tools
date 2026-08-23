@@ -659,6 +659,7 @@ import { useSettingsDb } from "@/database/settings/index";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import { classifyWpfDlls } from "@/utils/wpfDllClassify";
 import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
@@ -1871,30 +1872,83 @@ const publishWpfClient = async () => {
     // 将生成的文件复制到[临时发布目录]
     const dirName = fileName.replace(".zip", "");
     if (dirName == "Plugins") {
+      // --- 扁平兜底：按文件夹独立兜底（Domain/UI 各自检查） ---
+      const domainPath = `${removeSlash(wpfClientItem.clientPath)}/Domain`;
+      const uiPath = `${removeSlash(wpfClientItem.clientPath)}/UI`;
+      const domainExistsRes = await cmdInvoke("exists", { path: domainPath });
+      const uiExistsRes = await cmdInvoke("exists", { path: uiPath });
+      const domainExists = domainExistsRes.code === 0 && domainExistsRes.data === true;
+      const uiExists = uiExistsRes.code === 0 && uiExistsRes.data === true;
+      let flatGroups: { Domain: string[]; UI: string[]; skipped: string[] } | null = null;
+      const ensureFlatGroups = async () => {
+        if (flatGroups) return flatGroups;
+        const readRes = await cmdInvoke("read_all_dlls", { dir: removeSlash(wpfClientItem.clientPath as string) });
+        let topDlls: string[] = [];
+        if (readRes.code === 0 && readRes.data) {
+          topDlls = readRes.data as string[];
+        }
+        flatGroups = classifyWpfDlls(topDlls);
+        return flatGroups;
+      };
       // Domain
-      const sourceDomainPath = `${removeSlash(wpfClientItem.clientPath)}/Domain`;
       const destinationDomainPath = `${removeSlash(tempPublishDir)}/Domain`;
-      const copyDomainResult = await cmdInvoke("copy_path", {
-        source: sourceDomainPath,
-        destination: destinationDomainPath,
-        ...getRetryArgs("copy"),
-      });
-      if (copyDomainResult.code !== 0) {
-        printInfoLog(`复制文件目录 ${sourceDomainPath} 失败.`, "log-error");
-        return false;
+      if (domainExists) {
+        const copyDomainResult = await cmdInvoke("copy_path", {
+          source: domainPath,
+          destination: destinationDomainPath,
+          ...getRetryArgs("copy"),
+        });
+        if (copyDomainResult.code !== 0) {
+          printInfoLog(`复制文件目录 ${domainPath} 失败.`, "log-error");
+          return false;
+        }
+      } else {
+        const groups = await ensureFlatGroups();
+        printInfoLog(
+          `未检测到 Domain 文件夹，已按名称规则（含WPF→UI、含WEB→跳过、其余→Domain）从目录顶层分选 ${groups.Domain.length} 个DLL`,
+          "log-warning"
+        );
+        // 确保目标目录存在（copy_dll_files_by_names 会创建，但提前创建以保证后续 compress_zip 有目录）
+        await cmdInvoke("create_dir", { path: destinationDomainPath });
+        const copyDomainResult = await cmdInvoke("copy_dll_files_by_names", {
+          source: removeSlash(wpfClientItem.clientPath as string),
+          fileNames: groups.Domain,
+          destination: destinationDomainPath,
+        });
+        if (copyDomainResult.code !== 0) {
+          printInfoLog(`复制文件目录 ${domainPath} 失败.`, "log-error");
+          return false;
+        }
       }
 
       // UI
-      const sourceUiPath = `${removeSlash(wpfClientItem.clientPath)}/UI`;
       const destinationUiPath = `${removeSlash(tempPublishDir)}/UI`;
-      const copyUiResult = await cmdInvoke("copy_path", {
-        source: sourceUiPath,
-        destination: destinationUiPath,
-        ...getRetryArgs("copy"),
-      });
-      if (copyUiResult.code !== 0) {
-        printInfoLog(`复制文件目录 ${sourceUiPath} 失败.`, "log-error");
-        return false;
+      if (uiExists) {
+        const copyUiResult = await cmdInvoke("copy_path", {
+          source: uiPath,
+          destination: destinationUiPath,
+          ...getRetryArgs("copy"),
+        });
+        if (copyUiResult.code !== 0) {
+          printInfoLog(`复制文件目录 ${uiPath} 失败.`, "log-error");
+          return false;
+        }
+      } else {
+        const groups = await ensureFlatGroups();
+        printInfoLog(
+          `未检测到 UI 文件夹，已按名称规则（含WPF→UI、含WEB→跳过、其余→Domain）从目录顶层分选 ${groups.UI.length} 个DLL`,
+          "log-warning"
+        );
+        await cmdInvoke("create_dir", { path: destinationUiPath });
+        const copyUiResult = await cmdInvoke("copy_dll_files_by_names", {
+          source: removeSlash(wpfClientItem.clientPath as string),
+          fileNames: groups.UI,
+          destination: destinationUiPath,
+        });
+        if (copyUiResult.code !== 0) {
+          printInfoLog(`复制文件目录 ${uiPath} 失败.`, "log-error");
+          return false;
+        }
       }
 
       // 重新打包压缩
