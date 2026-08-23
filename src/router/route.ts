@@ -47,67 +47,39 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 		},
 		children: [
 			{
-				path: '/home',
-				name: 'home',
-				component: () => import('@/views/home/index.vue'),
-				meta: {
-					title: 'message.router.publishPlatform',
-					isLink: '',
-					isHide: false,
-					isKeepAlive: true,
-					isAffix: true,
-					isIframe: false,
-					icon: 'smom-icon smom-icon-fabu'
-				},
-				redirect: "",
-				children: []
-			},
-			{
-				path: '/smom',
-				name: 'smom',
+				path: '/publish',
+				name: 'publish',
 				component: () => import("@/layout/routerView/parent.vue"),
-				redirect: "/smom/project",
+				redirect: "/home",
 				meta: {
-					title: 'message.router.smom',
+					title: 'message.router.publish',
 					isLink: '',
 					isHide: false,
 					isKeepAlive: true,
 					isAffix: false,
 					isIframe: false,
-					icon: 'smom-icon smom-icon-smom'
+					icon: 'smom-icon smom-icon-fabu'
 				},
 				children: [
 					{
-						path: '/smom/project',
-						name: 'smomProject',
-						component: () => import('@/views/project/index.vue'),
+						path: '/home',
+						name: 'home',
+						component: () => import('@/views/home/index.vue'),
 						meta: {
-							title: 'message.router.projectManage',
+							title: 'message.router.publishPlatform',
 							isLink: '',
 							isHide: false,
 							isKeepAlive: true,
-							isAffix: false,
+							isAffix: true,
 							isIframe: false,
-							icon: 'smom-icon smom-icon-xiangmuguanli'
+							icon: 'smom-icon smom-icon-fabu'
 						},
+						redirect: "",
+						children: []
 					},
 					{
-						path: '/smom/appconfig',
-						name: 'smomAppconfig',
-						component: () => import('@/views/appconfig/index.vue'),
-						meta: {
-							title: 'message.router.appconfig',
-							isLink: '',
-							isHide: false,
-							isKeepAlive: true,
-							isAffix: false,
-							isIframe: false,
-							icon: 'smom-icon smom-icon-appconfig'
-						},
-					},
-					{
-						path: '/smom/papersPublish',
-						name: 'smomPapersPublish',
+						path: '/papersPublish',
+						name: 'papersPublish',
 						component: () => import('@/views/papersPublish/index.vue'),
 						meta: {
 							title: 'message.router.papersPublish',
@@ -122,52 +94,97 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 				]
 			},
 			{
-				path: '/server',
-				name: 'server',
-				component: () => import('@/views/servers/index.vue'),
+				path: '/config',
+				name: 'config',
+				component: () => import("@/layout/routerView/parent.vue"),
+				redirect: "/project",
 				meta: {
-					title: 'message.router.server',
+					title: 'message.router.config',
 					isLink: '',
 					isHide: false,
 					isKeepAlive: true,
 					isAffix: false,
 					isIframe: false,
-					icon: 'smom-icon smom-icon-fuwuqi'
+					icon: 'ele-Tools'
 				},
-				redirect: "",
-				children: []
-			},
-			{
-				path: '/tfs',
-				name: 'teamFoundationServer',
-				component: () => import('@/views/teamFoundationServer/index.vue'),
-				meta: {
-					title: 'message.router.tfs',
-					isLink: '',
-					isHide: false,
-					isKeepAlive: true,
-					isAffix: false,
-					isIframe: false,
-					icon: 'smom-icon smom-icon-tfs'
-				},
-				redirect: "",
-				children: []
-			},
-			{
-				path: '/git',
-				name: 'git',
-				component: () => import('@/views/git/index.vue'),
-				meta: {
-					title: 'message.router.git', // 修改为国际化标题
-					isLink: '',
-					isHide: false,
-					isKeepAlive: true,
-					isAffix: false,
-					isIframe: false,
-					icon: 'smom-icon smom-icon-git'
-				},
-				redirect: "",
-				children: []
+				children: [
+					{
+						path: '/project',
+						name: 'project',
+						component: () => import('@/views/project/index.vue'),
+						meta: {
+							title: 'message.router.projectManage',
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'smom-icon smom-icon-xiangmuguanli'
+						},
+					},
+					{
+						path: '/appconfig',
+						name: 'appconfig',
+						component: () => import('@/views/appconfig/index.vue'),
+						meta: {
+							title: 'message.router.appconfig',
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'smom-icon smom-icon-appconfig'
+						},
+					},
+					{
+						path: '/server',
+						name: 'server',
+						component: () => import('@/views/servers/index.vue'),
+						meta: {
+							title: 'message.router.server',
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'smom-icon smom-icon-fuwuqi'
+						},
+						redirect: "",
+						children: []
+					},
+					{
+						path: '/tfs',
+						name: 'teamFoundationServer',
+						component: () => import('@/views/teamFoundationServer/index.vue'),
+						meta: {
+							title: 'message.router.tfs',
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'smom-icon smom-icon-tfs'
+						},
+						redirect: "",
+						children: []
+					},
+					{
+						path: '/git',
+						name: 'git',
+						component: () => import('@/views/git/index.vue'),
+						meta: {
+							title: 'message.router.git', // 修改为国际化标题
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'smom-icon smom-icon-git'
+						},
+						redirect: "",
+						children: []
+					}
+				]
 			},
 			{
 				path: '/backups',
