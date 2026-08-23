@@ -82,14 +82,12 @@ import { ElMessage } from 'element-plus';
 import { open } from '@tauri-apps/plugin-dialog';
 import { cmdInvoke } from '@/utils/command';
 import { useProjectDb } from '@/database/project';
-import { useTfsDb } from '@/database/teamFoundationServer';
 import { removeSlash } from '@/utils/other';
 import type { WizardDraft, ServiceName } from './wizardTypes';
-import { defaultTfsName } from './wizardTypes';
+import { detectTfsForSln } from '@/utils/tfsDetect';
 
 const draft = inject<WizardDraft>('wizardDraft')!;
 const projectDb = useProjectDb();
-const tfsDb = useTfsDb();
 const tfsDetectFailed = ref('');
 const tfsDetecting = ref(false);
 
@@ -130,32 +128,16 @@ async function onSelectSln(){
   await detectTfs();
 }
 
-/** SLN 的 TFS 工作区自动识别：tfvcPath 优先复用存量 TFS 记录（避免全盘扫描），失败仅提示不阻塞 */
+/** SLN 的 TFS 工作区自动识别（共享工具）：失败仅提示不阻塞向导 */
 async function detectTfs(){
   draft.tfs = null;
   tfsDetectFailed.value = '';
   if(!draft.project.slnPath) return;
   tfsDetecting.value = true;
   try {
-    let tfvcPath: string | null = null;
-    try {
-      const tr = await tfsDb.getTfsList({ tfsName:null, tfsSourcePath:null, sorting:'id DESC', skipCount:0, maxResultCount:1000 });
-      const first = (tr.data?.data ?? []).find((x:RowTfsType)=>x.tfvcPath);
-      tfvcPath = first?.tfvcPath ?? null;
-    } catch { /* 查询失败走 Rust 端 find_tf_exe 兜底 */ }
-    const r = await cmdInvoke<any>('detect_tfs_workspace', { slnPath: draft.project.slnPath, tfvcPath });
-    if(r.code===0 && r.data){
-      draft.tfs = {
-        tfsName: defaultTfsName(r.data.tfsSourcePath),
-        tfsServerUrl: r.data.tfsServerUrl,
-        tfsSourcePath: r.data.tfsSourcePath,
-        tfsLocalPath: r.data.tfsLocalPath,
-        tfvcPath: r.data.tfvcPath,
-        workspaceName: r.data.workspaceName,
-      };
-    } else {
-      tfsDetectFailed.value = `未识别到 TFS 工作区：${r.data ?? r.msg}（可忽略，稍后在 TFS 管理页手动录入）`;
-    }
+    const info = await detectTfsForSln(draft.project.slnPath);
+    if(info) draft.tfs = info;
+    else tfsDetectFailed.value = '未识别到 TFS 工作区（可忽略，稍后在 TFS 管理页手动录入）';
   } finally {
     tfsDetecting.value = false;
   }
