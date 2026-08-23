@@ -63,6 +63,7 @@ import { useI18n } from 'vue-i18n';
 import { cmdInvoke } from '@/utils/command';
 import { useServerDb } from '@/database/servers';
 import type { WizardDraft, WizardServer } from './wizardTypes';
+import { deriveServerEnvTags } from './wizardTypes';
 
 const { t } = useI18n();
 
@@ -81,7 +82,7 @@ onMounted(async () => {
     for (const s of rows) {
       const key = `${s.ip}:${s.port}`;
       if (draft.servers.some((x) => `${x.ip}:${x.port}` === key)) continue;
-      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false });
+      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false, envTags: deriveServerEnvTags(s.name), isWpfServer: false });
     }
     importedCount.value = draft.servers.length;
   } catch (e) {
@@ -94,7 +95,7 @@ const importList = ref<RowServerType[]>([]);
 const importSelected = ref<RowServerType[]>([]);
 
 function onAdd(){
-  draft.servers.push({ name:'', os:1, ip:'', port:22, account:'', pwd:'', scanRoot:'', isNew:true });
+  draft.servers.push({ name:'', os:1, ip:'', port:22, account:'', pwd:'', scanRoot:'', isNew:true, envTags: [], isWpfServer: false });
 }
 function onRemove(idx:number){
   draft.servers.splice(idx,1);
@@ -115,7 +116,7 @@ function onConfirmImport(){
   for(const s of importSelected.value){
     const key = `${s.ip}:${s.port}`;
     if(draft.servers.some(x=>`${x.ip}:${x.port}`===key)) continue;
-    draft.servers.push({ id:s.id!, name:s.name, os:s.os, ip:s.ip, port:s.port, account:s.account??'', pwd:s.pwd??'', scanRoot:'', isNew:false });
+    draft.servers.push({ id:s.id!, name:s.name, os:s.os, ip:s.ip, port:s.port, account:s.account??'', pwd:s.pwd??'', scanRoot:'', isNew:false, envTags: deriveServerEnvTags(s.name), isWpfServer: false });
   }
   importVisible.value=false;
 }

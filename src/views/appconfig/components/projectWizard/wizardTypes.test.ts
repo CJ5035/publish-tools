@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEmptyDraft, defaultTfsName, deriveAnchors, diffScanTargets, matchServices, rematchAll, mergeConfigItems, serializeDraft, restoreDraft } from './wizardTypes';
+import { createEmptyDraft, defaultTfsName, deriveAnchors, deriveServerEnvTags, diffScanTargets, matchServices, rematchAll, mergeConfigItems, resolveWpfServer, serializeDraft, restoreDraft } from './wizardTypes';
 import type { WizardServer, RemoteServiceVo, WizardDraft, StoredWizardDraft } from './wizardTypes';
 // satisfy noUnusedLocals (brief requires these type imports; reference them so vue-tsc passes)
 const _typeCheck: WizardDraft | StoredWizardDraft | null = null;
@@ -35,7 +35,7 @@ describe('deriveAnchors', () => {
   });
 });
 
-const srv = (ip: string): WizardServer => ({ name: ip, os: 2, ip, port: 22, account: 'a', pwd: 'p', scanRoot: '', isNew: true });
+const srv = (ip: string): WizardServer => ({ name: ip, os: 2, ip, port: 22, account: 'a', pwd: 'p', scanRoot: '', isNew: true, envTags: [], isWpfServer: false });
 
 describe('diffScanTargets', () => {
   it('首次进入（无已扫描键）：全部待扫、无待清', () => {
@@ -266,7 +266,7 @@ describe('draft 持久化', () => {
     const d = createEmptyDraft();
     d.s1Mode = { projectMode: 'existing', selectedProjectId: 3 };
     d.project.slnPath = 'D:/repo/a.sln';
-    d.servers.push({ name: 's1', os: 2, ip: '1.1.1.1', port: 22, account: 'root', pwd: 'secret', scanRoot: '', isNew: true });
+    d.servers.push({ name: 's1', os: 2, ip: '1.1.1.1', port: 22, account: 'root', pwd: 'secret', scanRoot: '', isNew: true, envTags: [], isWpfServer: false });
     const stored = serializeDraft(d, 2, 0, false, [{ env: 'Dev', status: '新增成功', msg: '' }], 1724500000000);
     const restored = restoreDraft(JSON.parse(JSON.stringify(stored)));
     expect(restored).not.toBeNull();
@@ -314,5 +314,49 @@ describe('createEmptyDraft tfs 字段', () => {
     const d = createEmptyDraft();
     expect(d.tfs).toBeNull();
     expect(d.tfsSaved).toBe(false);
+  });
+});
+
+const wsrv = (name: string, over: Partial<WizardServer> = {}): WizardServer => ({
+  name, os: 1, ip: `10.0.0.${name.length}`, port: 22, account: 'a', pwd: 'p', scanRoot: '', isNew: true,
+  envTags: [], isWpfServer: false, ...over,
+});
+
+describe('deriveServerEnvTags', () => {
+  it('正式/生产 → [3]，测试/UAT 大小写不敏感 → [2]，开发/DEV → [1]', () => {
+    expect(deriveServerEnvTags('华俊-正式1')).toEqual([3]);
+    expect(deriveServerEnvTags('生产库')).toEqual([3]);
+    expect(deriveServerEnvTags('测试机A')).toEqual([2]);
+    expect(deriveServerEnvTags('UAT-2')).toEqual([2]);
+    expect(deriveServerEnvTags('开发01')).toEqual([1]);
+    expect(deriveServerEnvTags('Dev-Build')).toEqual([1]);
+  });
+  it('多组命中取并集（正式测试机 → [2,3]），未命中 → []', () => {
+    expect(deriveServerEnvTags('正式测试机')).toEqual([2, 3]);
+    expect(deriveServerEnvTags('华俊1')).toEqual([]);
+  });
+});
+
+describe('resolveWpfServer', () => {
+  it('零台勾选返回 null', () => {
+    expect(resolveWpfServer([wsrv('a'), wsrv('b')], 1)).toBeNull();
+  });
+  it('envTags 匹配当前环境者优先于未指定', () => {
+    const tagged = wsrv('正式机', { isWpfServer: true, envTags: [3] });
+    const untagged = wsrv('任动机', { isWpfServer: true });
+    expect(resolveWpfServer([untagged, tagged], 3)?.name).toBe('正式机');
+  });
+  it('无匹配标签时回退未指定者；全未指定取池内第一台', () => {
+    const only = wsrv('任动机', { isWpfServer: true });
+    expect(resolveWpfServer([only], 1)?.name).toBe('任动机');
+    const a = wsrv('a', { isWpfServer: true });
+    const b = wsrv('b', { isWpfServer: true });
+    expect(resolveWpfServer([a, b], 2)?.name).toBe('a');
+  });
+  it('匹配多台取池内顺序第一台；未勾选者永不参与', () => {
+    const a = wsrv('正式1', { isWpfServer: true, envTags: [3] });
+    const b = wsrv('正式2', { isWpfServer: true, envTags: [3] });
+    const c = wsrv('正式3', { envTags: [3] });
+    expect(resolveWpfServer([a, b, c], 3)?.name).toBe('正式1');
   });
 });

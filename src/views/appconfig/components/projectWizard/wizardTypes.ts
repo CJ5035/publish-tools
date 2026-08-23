@@ -15,6 +15,10 @@ export interface WizardServer {
   pwd: string;
   scanRoot: string;
   isNew: boolean;
+  /** 归属环境集合（1=Dev/2=Uat/3=Pro）：向导会话内属性，不落库，随草稿持久化（项 10） */
+  envTags: number[];
+  /** 是否 wpfClient 服务器（项 13）：不落库，随草稿持久化；续配带入时按已有配置回勾 */
+  isWpfServer: boolean;
 }
 
 export interface WizardProject {
@@ -363,4 +367,26 @@ export function restoreDraft(raw: unknown): StoredWizardDraft | null {
   if (!Array.isArray((s.draft as WizardDraft).servers)) return null;
   if (!Array.isArray((s.draft as WizardDraft).envs)) return null;
   return s as StoredWizardDraft;
+}
+
+/** 服务器名 → 环境标签推断（项 10，大小写不敏感，多组命中取并集升序）：
+ *  正式|生产 → 3，测试|UAT → 2，开发|DEV → 1；未命中 → []（未指定，任何环境默认显示） */
+export function deriveServerEnvTags(name: string): number[] {
+  const n = name.toLowerCase();
+  const tags = new Set<number>();
+  if (/正式|生产/.test(n)) tags.add(3);
+  if (/测试|uat/.test(n)) tags.add(2);
+  if (/开发|dev/.test(n)) tags.add(1);
+  return [...tags].sort((a, b) => a - b);
+}
+
+/** wpfClient 目标服务器解析（项 13）：勾选服务器中 envTags 匹配当前环境者优先、
+ *  其次 envTags 为空者、同优先级取池内顺序第一台；零台勾选返回 null。 */
+export function resolveWpfServer(servers: WizardServer[], env: number): WizardServer | null {
+  const checked = servers.filter((s) => s.isWpfServer);
+  if (checked.length === 0) return null;
+  const tagged = checked.filter((s) => s.envTags.includes(env));
+  if (tagged.length > 0) return tagged[0];
+  const untagged = checked.filter((s) => s.envTags.length === 0);
+  return untagged[0] ?? null;
 }
