@@ -203,6 +203,9 @@ async function ensureSchema(database: Database) {
     if (!hasSettingsColumn("win_upload_retry_interval")) {
         await database.execute("ALTER TABLE t_settings ADD COLUMN win_upload_retry_interval INTEGER DEFAULT 3");
     }
+    if (!hasSettingsColumn("ms_build_path")) {
+        await database.execute("ALTER TABLE t_settings ADD COLUMN ms_build_path TEXT");
+    }
 
     await database.execute(`INSERT INTO t_scan_config (name, exclude_patterns, include_patterns, exclude_system_dirs, exclude_hidden_dirs, is_global, project_id, create_time)
 SELECT '默认扫描规则',
