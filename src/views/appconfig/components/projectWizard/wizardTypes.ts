@@ -366,6 +366,11 @@ export function restoreDraft(raw: unknown): StoredWizardDraft | null {
   if (!s.draft || typeof s.draft !== 'object') return null;
   if (!Array.isArray((s.draft as WizardDraft).servers)) return null;
   if (!Array.isArray((s.draft as WizardDraft).envs)) return null;
+  // 兼容旧草稿：补齐 envTags/isWpfServer
+  for (const srv of (s.draft as WizardDraft).servers as any[]) {
+    if (!Array.isArray(srv.envTags)) srv.envTags = [];
+    if (typeof srv.isWpfServer !== 'boolean') srv.isWpfServer = false;
+  }
   return s as StoredWizardDraft;
 }
 
@@ -385,8 +390,8 @@ export function deriveServerEnvTags(name: string): number[] {
 export function resolveWpfServer(servers: WizardServer[], env: number): WizardServer | null {
   const checked = servers.filter((s) => s.isWpfServer);
   if (checked.length === 0) return null;
-  const tagged = checked.filter((s) => s.envTags.includes(env));
+  const tagged = checked.filter((s) => (s.envTags ?? []).includes(env));
   if (tagged.length > 0) return tagged[0];
-  const untagged = checked.filter((s) => s.envTags.length === 0);
+  const untagged = checked.filter((s) => (s.envTags ?? []).length === 0);
   return untagged[0] ?? null;
 }

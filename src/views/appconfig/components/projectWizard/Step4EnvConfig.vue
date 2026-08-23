@@ -100,8 +100,8 @@ const activeEnvInChecked = computed(() => checkedEnvs.value.includes(activeEnv.v
 const wpfSrv = computed(() => resolveWpfServer(draft.servers, activeEnv.value));
 const wpfCheckedCount = computed(() => draft.servers.filter((s) => s.isWpfServer).length);
 const wpfPath = computed(() => cfg.value?.services.find((s) => s.name === 'wpfClient')?.targets[0]?.path ?? '');
-const matchedServers = computed(() => draft.servers.filter((s) => s.envTags.length === 0 || s.envTags.includes(activeEnv.value)));
-const otherServers = computed(() => draft.servers.filter((s) => !(s.envTags.length === 0 || s.envTags.includes(activeEnv.value))));
+const matchedServers = computed(() => draft.servers.filter((s) => (s.envTags ?? []).length === 0 || (s.envTags ?? []).includes(activeEnv.value)));
+const otherServers = computed(() => draft.servers.filter((s) => !((s.envTags ?? []).length === 0 || (s.envTags ?? []).includes(activeEnv.value))));
 
 /** 零台勾选自动置未勾选（项 13）；有勾选时回填 serverKey 与首个识别路径（immediate：进入环境即自动带出，不等变化） */
 watch(wpfSrv, (v) => {
@@ -190,7 +190,7 @@ function mismatchWarnings(): string[] {
       if (!srv) continue;
       const n = srv.name.toLowerCase();
       const kw = (activeEnv.value === 3 && /测试|uat/.test(n)) || (activeEnv.value !== 3 && /正式|生产/.test(n));
-      if ((srv.envTags.length > 0 && !srv.envTags.includes(activeEnv.value)) || kw) {
+      if (((srv.envTags ?? []).length > 0 && !(srv.envTags ?? []).includes(activeEnv.value)) || kw) {
         warns.push(t('message.appconfig.wizard.envMismatchWarn', { server: srv.name, env: displayEnv(activeEnv.value) }));
       }
     }

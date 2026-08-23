@@ -93,13 +93,13 @@ const importedCount = ref(0);
 const testStatus = ref<Record<string, 'ok' | 'fail' | 'testing'>>({});
 
 function onNameChange(row: WizardServer) {
-  if (row.envTags.length === 0) row.envTags = deriveServerEnvTags(row.name);
+  if (!row.envTags || row.envTags.length === 0) row.envTags = deriveServerEnvTags(row.name ?? '');
 }
 
 /** 复制该行为新行：保留账密/端口/系统/扫描根/环境标签/isWpfServer，清空名称/IP（项 15） */
 function onCopyRow(row: WizardServer) {
   const { id, name, ip, ...rest } = row;
-  draft.servers.push({ ...rest, envTags: [...rest.envTags], name: '', ip: '', isNew: true });
+  draft.servers.push({ ...rest, envTags: [...(rest.envTags ?? [])], name: '', ip: '', isNew: true });
 }
 
 /** 批量测试连接（项 15）：并发上限 4，结果落行内 tag */
