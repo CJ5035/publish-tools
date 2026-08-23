@@ -25,6 +25,23 @@ export interface WizardProject {
   clientPaths: Partial<Record<ServiceName, string>>;
 }
 
+export interface WizardTfsInfo {
+  tfsName: string;
+  tfsServerUrl: string;
+  tfsSourcePath: string;
+  tfsLocalPath: string;
+  tfvcPath: string;
+  workspaceName: string;
+}
+
+/** tfsName 默认值：取源位置尾段（如 $/SMOM.DEV.10.2/SMOM.NBXR → SMOM.NBXR）。
+ *  不用 Collection 尾段——存量记录共享同一集合，同集合多项目会生成相同默认名，必撞唯一性查重。 */
+export function defaultTfsName(tfsSourcePath: string): string {
+  const p = tfsSourcePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = p.lastIndexOf('/');
+  return idx >= 0 ? p.substring(idx + 1) : p;
+}
+
 export interface ServiceTarget {
   serverKey: string;
   path: string;
@@ -53,6 +70,8 @@ export interface WizardDraft {
   s1Mode: { projectMode: 'existing' | 'new'; selectedProjectId: number | null };
   envs: number[];
   envConfig: Record<number, EnvConfig>;
+  tfs: WizardTfsInfo | null;
+  tfsSaved: boolean;
 }
 
 export const DEFAULT_SERVICE_KEYWORDS: Record<ServiceName, string[]> = {
@@ -92,6 +111,8 @@ export function createEmptyDraft(): WizardDraft {
     s1Mode: { projectMode: 'new', selectedProjectId: null },
     envs: [],
     envConfig: {},
+    tfs: null,
+    tfsSaved: false,
   };
 }
 

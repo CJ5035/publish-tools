@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveAnchors, diffScanTargets, matchServices, rematchAll, mergeConfigItems, serializeDraft, restoreDraft, createEmptyDraft } from './wizardTypes';
+import { createEmptyDraft, defaultTfsName, deriveAnchors, diffScanTargets, matchServices, rematchAll, mergeConfigItems, serializeDraft, restoreDraft } from './wizardTypes';
 import type { WizardServer, RemoteServiceVo, WizardDraft, StoredWizardDraft } from './wizardTypes';
 // satisfy noUnusedLocals (brief requires these type imports; reference them so vue-tsc passes)
 const _typeCheck: WizardDraft | StoredWizardDraft | null = null;
@@ -291,5 +291,28 @@ describe('draft 持久化', () => {
     const restored = restoreDraft(stored);
     expect(restored!.isSummary).toBe(true);
     expect(restored!.summaryRows).toEqual([{ env: 'Uat', status: '更新成功', msg: '' }]);
+  });
+});
+
+describe('defaultTfsName', () => {
+  it('取源位置尾段（$/SMOM.DEV.10.2/SMOM.NBXR → SMOM.NBXR）', () => {
+    expect(defaultTfsName('$/SMOM.DEV.10.2/SMOM.NBXR')).toBe('SMOM.NBXR');
+  });
+  it('尾部分隔符容错', () => {
+    expect(defaultTfsName('$/a/b/')).toBe('b');
+  });
+  it('反斜杠容错', () => {
+    expect(defaultTfsName('$/a\\b')).toBe('b');
+  });
+  it('无分隔符返回原串', () => {
+    expect(defaultTfsName('SMOM')).toBe('SMOM');
+  });
+});
+
+describe('createEmptyDraft tfs 字段', () => {
+  it('初始无 TFS 识别结果且未落库', () => {
+    const d = createEmptyDraft();
+    expect(d.tfs).toBeNull();
+    expect(d.tfsSaved).toBe(false);
   });
 });
