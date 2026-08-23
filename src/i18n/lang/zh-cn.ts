@@ -2,8 +2,9 @@
 export default {
 	router: {
 		home: '首页',
-		smom: 'SMOM',
+		publish: '发布',
 		publishPlatform: '项目发布',
+		config: '配置',
 		projectManage: '项目管理',
 		appconfig: '应用配置',
 		server: '服务器',

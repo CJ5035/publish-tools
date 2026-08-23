@@ -2,8 +2,9 @@
 export default {
 	router: {
 		home: 'home',
-		smom: 'SMOM',
+		publish: 'Publish',
 		publishPlatform: 'publish platform',
+		config: 'Configuration',
 		projectManage: 'project manage',
 		appconfig: 'application configuration',
 		server: 'server',
