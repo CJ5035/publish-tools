@@ -99,7 +99,7 @@ function onNameChange(row: WizardServer) {
 /** 复制该行为新行：保留账密/端口/系统/扫描根/环境标签/isWpfServer，清空名称/IP（项 15） */
 function onCopyRow(row: WizardServer) {
   const { id, name, ip, ...rest } = row;
-  draft.servers.push({ ...rest, name: '', ip: '', isNew: true });
+  draft.servers.push({ ...rest, envTags: [...rest.envTags], name: '', ip: '', isNew: true });
 }
 
 /** 批量测试连接（项 15）：并发上限 4，结果落行内 tag */
@@ -117,8 +117,12 @@ async function onTestAll() {
 async function testOne(row: WizardServer) {
   const key = `${row.ip}:${row.port}`;
   testStatus.value[key] = 'testing';
-  const r = await cmdInvoke('server_connection', { username: row.account, password: row.pwd, server: key });
-  testStatus.value[key] = r.code === 0 ? 'ok' : 'fail';
+  try {
+    const r = await cmdInvoke('server_connection', { username: row.account, password: row.pwd, server: key });
+    testStatus.value[key] = r.code === 0 ? 'ok' : 'fail';
+  } catch {
+    testStatus.value[key] = 'fail';
+  }
 }
 
 onMounted(async () => {
