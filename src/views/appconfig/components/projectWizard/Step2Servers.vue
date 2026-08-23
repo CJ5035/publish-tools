@@ -4,32 +4,32 @@
       {{ t('message.appconfig.wizard.importedHint', { n: importedCount }) }}
     </el-alert>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
-      <el-button type="primary" @click="onAdd">添加服务器</el-button>
-      <el-button @click="onImport">从已有导入</el-button>
+      <el-button type="primary" @click="onAdd">{{ t('message.appconfig.wizard.s2.add') }}</el-button>
+      <el-button @click="onImport">{{ t('message.appconfig.wizard.s2.import') }}</el-button>
       <el-button @click="onTestAll">{{ t('message.appconfig.wizard.testAll') }}</el-button>
     </div>
     <el-table :data="draft.servers" border size="small">
-      <el-table-column label="名称" width="140">
-        <template #default="{ row }"><el-input v-model="row.name" placeholder="名称" size="small" @change="onNameChange(row)" /></template>
+      <el-table-column :label="t('message.appconfig.wizard.s2.name')" width="140">
+        <template #default="{ row }"><el-input v-model="row.name" :placeholder="t('message.appconfig.wizard.s2.namePh')" size="small" @change="onNameChange(row)" /></template>
       </el-table-column>
-      <el-table-column label="系统" width="120">
+      <el-table-column :label="t('message.appconfig.wizard.s2.os')" width="120">
         <template #default="{ row }">
           <el-select v-model="row.os" size="small" style="width:100%;">
             <el-option :value="1" label="Windows" /><el-option :value="2" label="Docker" />
           </el-select>
         </template>
       </el-table-column>
-      <el-table-column label="IP" width="150">
-        <template #default="{ row }"><el-input v-model="row.ip" placeholder="IP" size="small" /></template>
+      <el-table-column :label="t('message.appconfig.wizard.s2.ip')" width="150">
+        <template #default="{ row }"><el-input v-model="row.ip" :placeholder="t('message.appconfig.wizard.s2.ipPh')" size="small" /></template>
       </el-table-column>
-      <el-table-column label="端口" width="90">
+      <el-table-column :label="t('message.appconfig.wizard.s2.port')" width="90">
         <template #default="{ row }"><el-input-number v-model="row.port" :min="1" :max="65535" size="small" style="width:100%;" /></template>
       </el-table-column>
-      <el-table-column label="账号" width="120">
-        <template #default="{ row }"><el-input v-model="row.account" placeholder="账号" size="small" /></template>
+      <el-table-column :label="t('message.appconfig.wizard.s2.account')" width="120">
+        <template #default="{ row }"><el-input v-model="row.account" :placeholder="t('message.appconfig.wizard.s2.accountPh')" size="small" /></template>
       </el-table-column>
-      <el-table-column label="密码" width="120">
-        <template #default="{ row }"><el-input v-model="row.pwd" type="password" placeholder="密码" size="small" show-password /></template>
+      <el-table-column :label="t('message.appconfig.wizard.s2.pwd')" width="120">
+        <template #default="{ row }"><el-input v-model="row.pwd" type="password" :placeholder="t('message.appconfig.wizard.s2.pwdPh')" size="small" show-password /></template>
       </el-table-column>
       <el-table-column :label="t('message.appconfig.wizard.envCol')" width="180">
         <template #default="{ row }">
@@ -43,32 +43,32 @@
           <el-checkbox v-model="row.isWpfServer" />
         </template>
       </el-table-column>
-      <el-table-column label="扫描根路径">
-        <template #default="{ row }"><el-input v-model="row.scanRoot" placeholder="可选：服务枚举失败时兜底目录扫描用" size="small" /></template>
+      <el-table-column :label="t('message.appconfig.wizard.s2.scanRoot')">
+        <template #default="{ row }"><el-input v-model="row.scanRoot" :placeholder="t('message.appconfig.wizard.s2.scanRootPh')" size="small" /></template>
       </el-table-column>
-      <el-table-column label="操作" width="200">
+      <el-table-column :label="t('message.appconfig.wizard.s2.op')" width="200">
         <template #default="{ row, $index }">
           <el-tag v-if="testStatus[`${row.ip}:${row.port}`]" size="small" :type="testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'success' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'danger' : 'warning'">
             {{ t(`message.appconfig.wizard.test${testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'Ok' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'Fail' : 'Testing'}`) }}
           </el-tag>
           <el-button size="small" @click="onCopyRow(row)">{{ t('message.appconfig.wizard.copyRow') }}</el-button>
-          <el-button size="small" @click="onTest(row)">测试连接</el-button>
-          <el-button size="small" type="danger" @click="onRemove($index)">删除</el-button>
+          <el-button size="small" @click="onTest(row)">{{ t('message.appconfig.wizard.s2.test') }}</el-button>
+          <el-button size="small" type="danger" @click="onRemove($index)">{{ t('message.appconfig.wizard.s2.del') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="importVisible" title="从已有导入" width="600px" append-to-body>
+    <el-dialog v-model="importVisible" :title="t('message.appconfig.wizard.s2.importTitle')" width="600px" append-to-body>
       <el-table :data="importList" @selection-change="onSelChange">
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="name" label="名称" />
-        <el-table-column prop="ip" label="IP" />
-        <el-table-column prop="projectName" label="所属项目" />
-        <el-table-column prop="port" label="端口" width="80" />
+        <el-table-column prop="name" :label="t('message.appconfig.wizard.s2.name')" />
+        <el-table-column prop="ip" :label="t('message.appconfig.wizard.s2.ip')" />
+        <el-table-column prop="projectName" :label="t('message.appconfig.wizard.s2.colProject')" />
+        <el-table-column prop="port" :label="t('message.appconfig.wizard.s2.port')" width="80" />
       </el-table>
       <template #footer>
-        <el-button @click="importVisible=false">取消</el-button>
-        <el-button type="primary" @click="onConfirmImport">确定</el-button>
+        <el-button @click="importVisible=false">{{ t('message.appconfig.wizard.cancel') }}</el-button>
+        <el-button type="primary" @click="onConfirmImport">{{ t('message.appconfig.wizard.s2.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -167,10 +167,10 @@ function onRemove(idx:number){
   draft.servers.splice(idx,1);
 }
 async function onTest(row:WizardServer){
-  if(!row.ip || !row.port || !row.account){ ElMessage.warning('请先填写 IP/端口/账号'); return; }
+  if(!row.ip || !row.port || !row.account){ ElMessage.warning(t('message.appconfig.wizard.s2.testNeed')); return; }
   await testOne(row);
-  if(testStatus.value[`${row.ip}:${row.port}`]==='ok') ElMessage.success('连接成功');
-  else ElMessageBox.alert('连接失败');
+  if(testStatus.value[`${row.ip}:${row.port}`]==='ok') ElMessage.success(t('message.appconfig.wizard.s2.connOk'));
+  else ElMessageBox.alert(t('message.appconfig.wizard.s2.connFail'));
 }
 async function onImport(){
   const r = await serverDb.getServerList({ projectId:null, name:null, sorting:'ts.id DESC', skipCount:0, maxResultCount:1000 } as any);
@@ -188,25 +188,25 @@ function onConfirmImport(){
 }
 
 async function validate(): Promise<boolean>{
-  if(draft.servers.length===0){ ElMessage.warning('至少需要 1 台服务器'); return false; }
+  if(draft.servers.length===0){ ElMessage.warning(t('message.appconfig.wizard.s2.atLeast1')); return false; }
   for(const r of draft.servers){
     if(!r.name?.trim()||!r.ip?.trim()||!r.port||!r.account?.trim()||!r.pwd?.trim()){
-      ElMessage.warning(`服务器 [${r.name||r.ip||'未命名'}] 信息不完整`);
+      ElMessage.warning(t('message.appconfig.wizard.s2.incomplete', { name: r.name || r.ip || t('message.appconfig.wizard.s2.unnamed') }));
       return false;
     }
   }
   // 池内去重
   const keys = draft.servers.map(s=>`${s.ip}:${s.port}`);
-  if(new Set(keys).size!==keys.length){ ElMessage.warning('服务器 ip:port 不能重复'); return false; }
+  if(new Set(keys).size!==keys.length){ ElMessage.warning(t('message.appconfig.wizard.s2.dupKey')); return false; }
   const names = draft.servers.map(s=>s.name);
-  if(new Set(names).size!==names.length){ ElMessage.warning('服务器名称不能重复'); return false; }
+  if(new Set(names).size!==names.length){ ElMessage.warning(t('message.appconfig.wizard.s2.dupName')); return false; }
   // 全局 name 冲突预检
   const needCheck = draft.servers.filter(s=>s.isNew);
   if(needCheck.length>0){
     const all = await serverDb.getServerList({ projectId:null, name:null, sorting:'ts.id DESC', skipCount:0, maxResultCount:1000 } as any);
     const existingNames = new Set((all.data?.data ?? []).map((x:RowServerType)=>x.name));
     for(const s of needCheck){
-      if(existingNames.has(s.name)){ ElMessage.warning(`服务器名称 [${s.name}] 已存在，请改名`); return false; }
+      if(existingNames.has(s.name)){ ElMessage.warning(t('message.appconfig.wizard.s2.nameExists', { name: s.name })); return false; }
     }
   }
   return true;

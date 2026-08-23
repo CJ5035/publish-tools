@@ -1,8 +1,8 @@
 <template>
   <div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
-      <el-button type="primary" :loading="scanning" @click="doScan()">重新扫描</el-button>
-      <el-button @click="keywordVisible=true">编辑关键词</el-button>
+      <el-button type="primary" :loading="scanning" @click="doScan()">{{ t('message.appconfig.wizard.s3.rescan') }}</el-button>
+      <el-button @click="keywordVisible=true">{{ t('message.appconfig.wizard.s3.editKw') }}</el-button>
       <el-button v-if="showBatchDeep" type="warning" :loading="batchDeeping" @click="onDeepAll">{{ t('message.appconfig.wizard.deepScanAll') }}</el-button>
     </div>
     <template v-for="srv in draft.servers" :key="srv.ip+':'+srv.port">
@@ -16,39 +16,39 @@
         <div v-for="b in blocksFor(srv)" :key="b.svc" style="border:1px solid #eee;padding:10px;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
             <span style="font-weight:600;width:130px;">{{ b.svc }}</span>
-            <el-tag v-if="b.status==='matched'" type="success" size="small">已识别 {{ b.count }} 个节点</el-tag>
-            <el-tag v-else-if="b.status==='candidate'" type="warning" size="small">候选</el-tag>
-            <el-tag v-else type="info" size="small">未识别</el-tag>
+            <el-tag v-if="b.status==='matched'" type="success" size="small">{{ t('message.appconfig.wizard.s3.matchedN', { n: b.count }) }}</el-tag>
+            <el-tag v-else-if="b.status==='candidate'" type="warning" size="small">{{ t('message.appconfig.wizard.s3.candidate') }}</el-tag>
+            <el-tag v-else type="info" size="small">{{ t('message.appconfig.wizard.s3.unmatched') }}</el-tag>
           </div>
           <template v-if="b.svc==='wpfClient'">
             <div style="display:flex;gap:6px;">
-              <el-select v-if="b.candidates.length>0" :model-value="b.paths[0] ?? ''" placeholder="选择候选" size="small" style="flex:1;" allow-create filterable :disabled="b.svc==='wpfClient' && !srv.isWpfServer" @change="onWpfPathChange(srv,$event)">
+              <el-select v-if="b.candidates.length>0" :model-value="b.paths[0] ?? ''" :placeholder="t('message.appconfig.wizard.s3.pickCandidate')" size="small" style="flex:1;" allow-create filterable :disabled="b.svc==='wpfClient' && !srv.isWpfServer" @change="onWpfPathChange(srv,$event)">
                 <el-option v-for="c in b.candidates" :key="c" :label="c" :value="c" />
               </el-select>
-              <el-input v-else :model-value="b.paths[0] ?? ''" placeholder="请填写路径" size="small" style="flex:1;" :disabled="b.svc==='wpfClient' && !srv.isWpfServer" @change="onWpfPathChange(srv,$event)" />
-              <el-button v-if="srv.isWpfServer" size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">深度扫描</el-button>
+              <el-input v-else :model-value="b.paths[0] ?? ''" :placeholder="t('message.appconfig.wizard.s3.pathPh')" size="small" style="flex:1;" :disabled="b.svc==='wpfClient' && !srv.isWpfServer" @change="onWpfPathChange(srv,$event)" />
+              <el-button v-if="srv.isWpfServer" size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">{{ t('message.appconfig.wizard.s3.deepScan') }}</el-button>
               <el-tag v-else size="small" type="info">{{ t('message.appconfig.wizard.wpfUnmarked') }}</el-tag>
             </div>
           </template>
           <template v-else>
             <div v-for="(p,idx) in b.displayPaths" :key="b.svc+'-'+idx" style="display:flex;gap:6px;margin-bottom:6px;">
-              <el-input :model-value="p" placeholder="请填写路径" size="small" style="flex:1;" @change="onRowPathChange(srv,b.svc,idx,$event)" />
-              <el-button size="small" type="danger" @click="removeRow(srv,b.svc,idx)">删除</el-button>
+              <el-input :model-value="p" :placeholder="t('message.appconfig.wizard.s3.pathPh')" size="small" style="flex:1;" @change="onRowPathChange(srv,b.svc,idx,$event)" />
+              <el-button size="small" type="danger" @click="removeRow(srv,b.svc,idx)">{{ t('message.appconfig.wizard.s4.delRow') }}</el-button>
             </div>
-            <el-button size="small" @click="addRow(srv,b.svc)">添加一行</el-button>
+            <el-button size="small" @click="addRow(srv,b.svc)">{{ t('message.appconfig.wizard.s4.addRow') }}</el-button>
           </template>
         </div>
       </el-card>
     </template>
 
-    <el-dialog v-model="keywordVisible" title="编辑关键词" width="520px" append-to-body>
+    <el-dialog v-model="keywordVisible" :title="t('message.appconfig.wizard.s3.kwTitle')" width="520px" append-to-body>
       <div v-for="svc in serviceList" :key="svc" style="margin-bottom:10px;">
         <div style="font-weight:600;">{{ svc }}</div>
-        <el-input v-model="keywordEdit[svc]" placeholder="逗号分隔" size="small" />
+        <el-input v-model="keywordEdit[svc]" :placeholder="t('message.appconfig.wizard.s3.kwPh')" size="small" />
       </div>
       <template #footer>
-        <el-button @click="keywordVisible=false">取消</el-button>
-        <el-button type="primary" @click="onSaveKeywords">保存并重新匹配</el-button>
+        <el-button @click="keywordVisible=false">{{ t('message.appconfig.wizard.cancel') }}</el-button>
+        <el-button type="primary" @click="onSaveKeywords">{{ t('message.appconfig.wizard.s3.saveKw') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -69,10 +69,10 @@ const scanning = ref(false);
 const scanStatus = ref<Record<string, ServerScanStatus>>({});
 const SCAN_CONCURRENCY = 4;
 const STATUS_META: Record<ServerScanStatus, { label: string; type: 'info' | 'warning' | 'success' | 'danger' }> = {
-  pending: { label: '待扫描', type: 'info' },
-  scanning: { label: '扫描中', type: 'warning' },
-  done: { label: '已完成', type: 'success' },
-  failed: { label: '扫描失败', type: 'danger' },
+  pending: { label: t('message.appconfig.wizard.s3.statusPending'), type: 'info' },
+  scanning: { label: t('message.appconfig.wizard.s3.statusScanning'), type: 'warning' },
+  done: { label: t('message.appconfig.wizard.s3.statusDone'), type: 'success' },
+  failed: { label: t('message.appconfig.wizard.s3.statusFailed'), type: 'danger' },
 };
 function statusOf(srv: { ip: string; port: number }){
   const s = scanStatus.value[`${srv.ip}:${srv.port}`];
@@ -214,7 +214,7 @@ async function deepScanWpf(s: WizardServer){
     if(r.code===0 && Array.isArray(r.data)){
       const hits = r.data as string[];
       if(hits.length===0){
-        ElMessage.info('深度扫描未发现 wpfClient 发布目录');
+        ElMessage.info(t('message.appconfig.wizard.s3.deepNone'));
         return;
       }
       if(!draft.scanCandidates[key]) draft.scanCandidates[key] = {};
@@ -222,7 +222,7 @@ async function deepScanWpf(s: WizardServer){
     }
   }catch(e){
     console.warn('深度扫描失败', key, e);
-    ElMessage.warning('深度扫描失败，请查看控制台日志');
+    ElMessage.warning(t('message.appconfig.wizard.s3.deepFail'));
   }finally{
     deepScanning.value[key] = false;
   }
@@ -306,7 +306,7 @@ async function onSaveKeywords(){
   });
   draft.scanResults = scanResults;
   draft.scanCandidates = scanCandidates;
-  ElMessage.success('已保存，已重新匹配');
+  ElMessage.success(t('message.appconfig.wizard.s3.saved'));
 }
 
 async function validate(): Promise<boolean>{ return true; }

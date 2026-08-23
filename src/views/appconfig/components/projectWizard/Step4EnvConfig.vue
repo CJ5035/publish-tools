@@ -29,7 +29,7 @@
             <template v-if="svc.name==='wpfClient'">
               <div v-if="wpfSrv" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <el-tag>{{ wpfSrv.name }}（{{ wpfSrv.ip }}）</el-tag>
-                <el-input :model-value="wpfPath" :placeholder="'发布路径'" style="flex:1;min-width:260px;" @update:model-value="onWpfPathChange" />
+                <el-input :model-value="wpfPath" :placeholder="t('message.appconfig.wizard.s4.pathPh')" style="flex:1;min-width:260px;" @update:model-value="onWpfPathChange" />
                 <el-tag v-if="wpfCheckedCount > 1" type="warning" size="small">
                   {{ t('message.appconfig.wizard.wpfMultiHint', { n: wpfCheckedCount, x: wpfSrv.name }) }}
                 </el-tag>
@@ -40,7 +40,7 @@
             </template>
             <template v-else>
               <div v-for="(trow, idx) in svc.targets" :key="idx" style="display:flex;gap:8px;margin-bottom:6px;">
-                <el-select v-model="trow.serverKey" placeholder="选择服务器" style="width:220px;" @change="onServerChange(trow, svc)">
+                <el-select v-model="trow.serverKey" :placeholder="t('message.appconfig.wizard.s4.pickServer')" style="width:220px;" @change="onServerChange(trow, svc)">
                   <el-option-group :label="t('message.appconfig.wizard.matchGroup')">
                     <el-option v-for="srv in matchedServers" :key="srv.ip+':'+srv.port" :label="srv.name" :value="srv.ip+':'+srv.port" />
                   </el-option-group>
@@ -48,10 +48,10 @@
                     <el-option v-for="srv in otherServers" :key="srv.ip+':'+srv.port" :label="srv.name" :value="srv.ip+':'+srv.port" />
                   </el-option-group>
                 </el-select>
-                <el-input v-model="trow.path" placeholder="发布路径" style="flex:1;" />
-                <el-button size="small" type="danger" @click="svc.targets.splice(idx,1)">删除</el-button>
+                <el-input v-model="trow.path" :placeholder="t('message.appconfig.wizard.s4.pathPh')" style="flex:1;" />
+                <el-button size="small" type="danger" @click="svc.targets.splice(idx,1)">{{ t('message.appconfig.wizard.s4.delRow') }}</el-button>
               </div>
-              <el-button size="small" @click="svc.targets.push({ serverKey:'', path:'' })">添加一行</el-button>
+              <el-button size="small" @click="svc.targets.push({ serverKey:'', path:'' })">{{ t('message.appconfig.wizard.s4.addRow') }}</el-button>
             </template>
           </template>
         </div>
@@ -328,14 +328,14 @@ async function submitEnv(): Promise<boolean> {
     // 3) tfs（首环境一次，tfsSaved 守卫，原样迁入）
     if (draft.tfs && !draft.tfsSaved) {
       const name = draft.tfs.tfsName.trim();
-      if (!name) throw new Error('请返回第1步填写 TFS 名称');
+      if (!name) throw new Error(t('message.appconfig.wizard.s1tfs.nameNeed'));
       const tr = await tfsDb.getTfsList({ tfsName: null, tfsSourcePath: null, sorting: 'id DESC', skipCount: 0, maxResultCount: 1000 });
       if (tr.code !== 0) throw new Error(tr.msg);
       const all = tr.data?.data ?? [];
       const dup = all.find((x: RowTfsType) => x.tfsServerUrl === draft.tfs!.tfsServerUrl && x.tfsSourcePath === draft.tfs!.tfsSourcePath);
       if (!dup) {
         if (all.some((x: RowTfsType) => x.tfsName === name)) {
-          throw new Error(`TFS名称[${name}]已存在，请返回第1步修改 TFS 名称`);
+          throw new Error(t('message.appconfig.wizard.s1tfs.dupName', { name }));
         }
         const ir = await tfsDb.insertTfs({ id: null, tfsName: name, tfsServerUrl: draft.tfs.tfsServerUrl, tfsSourcePath: draft.tfs.tfsSourcePath, tfsLocalPath: draft.tfs.tfsLocalPath, tfvcPath: draft.tfs.tfvcPath, remark: '配置向导自动识别' } as RowTfsType);
         if (ir.code !== 0) throw new Error(ir.msg);
@@ -372,7 +372,7 @@ async function submitEnv(): Promise<boolean> {
     emit('submitted', { env: activeEnv.value, mode: saveMode.value });
     return true;
   } catch (e: any) {
-    await ElMessageBox.alert(String(e.message ?? e), '落库失败');
+    await ElMessageBox.alert(String(e.message ?? e), t('message.appconfig.wizard.s4.saveFail'));
     return false;
   }
 }

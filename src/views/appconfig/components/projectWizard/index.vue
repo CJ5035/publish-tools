@@ -2,27 +2,27 @@
   <el-dialog v-model="visible" fullscreen :close-on-click-modal="false" :show-close="false" width="100%">
     <template #header>
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span>配置向导</span>
-        <el-button @click="onCancel">取消</el-button>
+        <span>{{ t('message.appconfig.wizard.title') }}</span>
+        <el-button @click="onCancel">{{ t('message.appconfig.wizard.cancel') }}</el-button>
       </div>
     </template>
 
     <el-steps :active="stepIndex" finish-status="success" style="margin-bottom:20px;">
-      <el-step title="项目信息" />
-      <el-step title="服务器" />
-      <el-step title="服务识别" />
+      <el-step :title="t('message.appconfig.wizard.steps.project')" />
+      <el-step :title="t('message.appconfig.wizard.steps.servers')" />
+      <el-step :title="t('message.appconfig.wizard.steps.identify')" />
       <el-step :title="envStepTitle" />
     </el-steps>
 
     <div v-if="isSummary">
-      <h3>配置完成</h3>
+      <h3>{{ t('message.appconfig.wizard.summaryDone') }}</h3>
       <el-table :data="summaryRows" style="width:100%">
-        <el-table-column prop="env" label="环境" />
-        <el-table-column prop="status" label="状态" />
-        <el-table-column prop="msg" label="说明" />
+        <el-table-column prop="env" :label="t('message.appconfig.wizard.colEnv')" />
+        <el-table-column prop="status" :label="t('message.appconfig.wizard.colStatus')" />
+        <el-table-column prop="msg" :label="t('message.appconfig.wizard.colMsg')" />
       </el-table>
       <div style="margin-top:16px;text-align:right;">
-        <el-button type="primary" @click="onFinish">完成</el-button>
+        <el-button type="primary" @click="onFinish">{{ t('message.appconfig.wizard.finish') }}</el-button>
       </div>
     </div>
 
@@ -33,8 +33,8 @@
       <Step4EnvConfig v-else-if="stepIndex===3" ref="s4eRef" :current-env="currentEnv" @switch-env="onSwitchEnv" @submitted="onEnvSubmitted" />
 
       <div style="margin-top:20px;text-align:right;">
-        <el-button @click="onPrev" :disabled="stepIndex===0">上一步</el-button>
-        <el-button v-if="stepIndex!==3" type="primary" @click="onNext">下一步</el-button>
+        <el-button @click="onPrev" :disabled="stepIndex===0">{{ t('message.appconfig.wizard.prev') }}</el-button>
+        <el-button v-if="stepIndex!==3" type="primary" @click="onNext">{{ t('message.appconfig.wizard.next') }}</el-button>
       </div>
     </template>
   </el-dialog>
@@ -86,7 +86,7 @@ function clearDraft() {
   try { Local.remove(DRAFT_KEY); } catch {}
 }
 
-const envStepTitle = computed(() => draft.envs.length ? `环境配置 (${displayEnv(currentEnv.value)})` : '环境配置');
+const envStepTitle = computed(() => draft.envs.length ? `${t('message.appconfig.wizard.stepsEnv')} (${displayEnv(currentEnv.value)})` : t('message.appconfig.wizard.stepsEnv'));
 
 const s1Ref = ref<any>(null);
 const s2Ref = ref<any>(null);
