@@ -3,6 +3,7 @@
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <el-button type="primary" :loading="scanning" @click="doScan()">重新扫描</el-button>
       <el-button @click="keywordVisible=true">编辑关键词</el-button>
+      <el-button v-if="showBatchDeep" type="warning" :loading="batchDeeping" @click="onDeepAll">{{ t('message.appconfig.wizard.deepScanAll') }}</el-button>
     </div>
     <template v-for="srv in draft.servers" :key="srv.ip+':'+srv.port">
       <el-card style="margin-bottom:12px;">
@@ -21,11 +22,12 @@
           </div>
           <template v-if="b.svc==='wpfClient'">
             <div style="display:flex;gap:6px;">
-              <el-select v-if="b.candidates.length>0" :model-value="b.paths[0] ?? ''" placeholder="选择候选" size="small" style="flex:1;" allow-create filterable @change="onWpfPathChange(srv,$event)">
+              <el-select v-if="b.candidates.length>0" :model-value="b.paths[0] ?? ''" placeholder="选择候选" size="small" style="flex:1;" allow-create filterable :disabled="b.svc==='wpfClient' && !srv.isWpfServer" @change="onWpfPathChange(srv,$event)">
                 <el-option v-for="c in b.candidates" :key="c" :label="c" :value="c" />
               </el-select>
-              <el-input v-else :model-value="b.paths[0] ?? ''" placeholder="请填写路径" size="small" style="flex:1;" @change="onWpfPathChange(srv,$event)" />
-              <el-button size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">深度扫描</el-button>
+              <el-input v-else :model-value="b.paths[0] ?? ''" placeholder="请填写路径" size="small" style="flex:1;" :disabled="b.svc==='wpfClient' && !srv.isWpfServer" @change="onWpfPathChange(srv,$event)" />
+              <el-button v-if="srv.isWpfServer" size="small" :loading="deepScanning[srv.ip+':'+srv.port]" @click="deepScanWpf(srv)">深度扫描</el-button>
+              <el-tag v-else size="small" type="info">{{ t('message.appconfig.wizard.wpfUnmarked') }}</el-tag>
             </div>
           </template>
           <template v-else>
@@ -52,13 +54,15 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, inject, onMounted, reactive } from 'vue';
+import { ref, inject, onMounted, reactive, computed } from 'vue';
 import { ElMessage } from 'element-plus';
 import { cmdInvoke } from '@/utils/command';
+import { useI18n } from 'vue-i18n';
 import { useScanConfigDb } from '@/database/scanConfig';
 import { DEFAULT_SERVICE_KEYWORDS, matchServices, SERVICE_NAMES, deriveAnchors, diffScanTargets, rematchAll } from './wizardTypes';
 import type { WizardDraft, RemoteServiceVo, ServiceName, ServerScanStatus, WizardServer } from './wizardTypes';
 
+const { t } = useI18n();
 const draft = inject<WizardDraft>('wizardDraft')!;
 const scanDb = useScanConfigDb();
 const scanning = ref(false);
@@ -167,6 +171,8 @@ async function probeWpfClient(s: WizardServer, key: string, services: RemoteServ
     const anchors = deriveAnchors(execDirs, s.os, s.account);
     if(anchors.length>0 && !s.scanRoot?.trim()) s.scanRoot = anchors[0]; // scanRoot 自愈回写
     if(anchors.length===0) return;
+    // 项 13：网络探测仅对勾选的 wpfClient 服务器执行；锚点推导与 scanRoot 自愈（上行）保留给所有服务器
+    if(!s.isWpfServer) return;
     const r = await cmdInvoke('scan_wpf_publish_dirs', { username: s.account, password: s.pwd, server: key, serverOs: s.os, anchors, fullScan: false });
     if(r.code!==0 || !Array.isArray(r.data)) return;
     const hits = r.data as string[];
@@ -183,6 +189,23 @@ async function probeWpfClient(s: WizardServer, key: string, services: RemoteServ
 /** 手动深度扫描：用户点击 wpfClient 行「深度扫描」按钮触发全盘探测（Linux 剪枝+timeout，Windows robocopy）。
  *  结果只进候选下拉，不自动拍板。禁自动调用——服务器无 wpfClient 是常态，全盘耗时 5~30s+。 */
 const deepScanning = ref<Record<string, boolean>>({});
+const batchDeeping = ref(false);
+const showBatchDeep = computed(() => {
+  const targets = draft.servers.filter((s) => s.isWpfServer);
+  if (targets.length < 2) return false;
+  return targets.every((s) => {
+    const arr = (draft.scanResults[`${s.ip}:${s.port}`] as any)?.wpfClient ?? [];
+    return !arr || arr.length === 0;
+  });
+});
+async function onDeepAll() {
+  batchDeeping.value = true;
+  try {
+    for (const s of draft.servers.filter((x) => x.isWpfServer)) {
+      await deepScanWpf(s);
+    }
+  } finally { batchDeeping.value = false; }
+}
 async function deepScanWpf(s: WizardServer){
   const key = `${s.ip}:${s.port}`;
   deepScanning.value[key] = true;

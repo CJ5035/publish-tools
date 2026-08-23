@@ -26,6 +26,8 @@ export default {
       testOk: '成功',
       testFail: '失败',
       testTesting: '测试中',
+      wpfUnmarked: '未标记',
+      deepScanAll: '全部深度扫描 wpfClient',
       summaryInsert: '新增成功',
       summaryUpdate: '更新成功',
       steps: {

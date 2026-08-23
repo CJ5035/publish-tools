@@ -26,6 +26,8 @@ export default {
       testOk: 'OK',
       testFail: 'Fail',
       testTesting: 'Testing',
+      wpfUnmarked: 'Unmarked',
+      deepScanAll: 'Deep-scan all wpfClient',
       summaryInsert: 'Created',
       summaryUpdate: 'Updated',
       steps: {
