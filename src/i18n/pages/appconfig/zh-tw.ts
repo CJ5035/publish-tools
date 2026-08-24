@@ -20,7 +20,7 @@ export default {
       importedHint: '已帶入該項目 {n} 臺伺服器（可編輯/刪除，未帶入其他項目伺服器）',
       envConfigured: '已配置',
       envCol: '環境',
-      wpfServerCol: 'wpfClient伺服器',
+      wpfServerCol: 'WPF',
       copyRow: '複製',
       testAll: '全部測試',
       testOk: '成功',
@@ -86,6 +86,8 @@ export default {
         nameNeed: '請返回第1步填寫 TFS 名稱',
         dupName: 'TFS名稱[{name}]已存在，請返回第1步修改 TFS 名稱',
         detectFail: '未識別到 TFS 工作區（可忽略，稍後在 TFS 管理頁手動錄入）',
+        colItem: '項目',
+        colValue: '值',
       },
       s2: {
         add: '添加伺服器',

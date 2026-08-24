@@ -20,7 +20,7 @@ export default {
       importedHint: 'Imported {n} server(s) from this project (editable/removable; other projects are not imported)',
       envConfigured: 'Configured',
       envCol: 'Environment',
-      wpfServerCol: 'wpfClient server',
+      wpfServerCol: 'WPF',
       copyRow: 'Copy',
       testAll: 'Test All',
       testOk: 'OK',
@@ -86,6 +86,8 @@ export default {
         nameNeed: 'Please go back to step 1 and fill TFS Name',
         dupName: 'TFS name [{name}] already exists, please go back to step 1 and change TFS Name',
         detectFail: 'No TFS workspace detected (can be ignored, add manually in TFS page later)',
+        colItem: 'Item',
+        colValue: 'Value',
       },
       s2: {
         add: 'Add Server',

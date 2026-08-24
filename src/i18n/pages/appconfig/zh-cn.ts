@@ -20,7 +20,7 @@ export default {
       importedHint: '已带入该项目 {n} 台服务器（可编辑/删除，未带入其他项目服务器）',
       envConfigured: '已配置',
       envCol: '环境',
-      wpfServerCol: 'wpfClient服务器',
+      wpfServerCol: 'WPF',
       copyRow: '复制',
       testAll: '全部测试',
       testOk: '成功',
@@ -86,6 +86,8 @@ export default {
         nameNeed: '请返回第1步填写 TFS 名称',
         dupName: 'TFS名称[{name}]已存在，请返回第1步修改 TFS 名称',
         detectFail: '未识别到 TFS 工作区（可忽略，稍后在 TFS 管理页手动录入）',
+        colItem: '项目',
+        colValue: '值',
       },
       s2: {
         add: '添加服务器',
