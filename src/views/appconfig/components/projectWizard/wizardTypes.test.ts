@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEmptyDraft, defaultTfsName, deriveAnchors, deriveServerEnvTags, diffScanTargets, matchServices, rematchAll, mergeConfigItems, resolveWpfServer, serializeDraft, restoreDraft } from './wizardTypes';
+import { createEmptyDraft, defaultTfsName, deriveAnchors, deriveServerEnvTags, diffScanTargets, matchServices, rematchAll, mergeConfigItems, resolveIdentity, resolveWpfServer, serializeDraft, restoreDraft } from './wizardTypes';
 import type { WizardServer, RemoteServiceVo, WizardDraft, StoredWizardDraft } from './wizardTypes';
 // satisfy noUnusedLocals (brief requires these type imports; reference them so vue-tsc passes)
 const _typeCheck: WizardDraft | StoredWizardDraft | null = null;
@@ -334,6 +334,37 @@ describe('deriveServerEnvTags', () => {
   it('多组命中取并集（正式测试机 → [2,3]），未命中 → []', () => {
     expect(deriveServerEnvTags('正式测试机')).toEqual([2, 3]);
     expect(deriveServerEnvTags('华俊1')).toEqual([]);
+  });
+});
+
+describe('resolveIdentity', () => {
+  it('windows: 命中 exec_dir 返回服务名', () => {
+    const raw = { '1.1.1.1:22': [vo('WebApiHost', 'D:/SMOM/Publish/WebApiHost')] };
+    expect(resolveIdentity(raw, '1.1.1.1:22', 'D:/SMOM/Publish/WebApiHost')).toBe('WebApiHost');
+  });
+
+  it('docker: 返回容器名', () => {
+    const raw = { '1.1.1.1:22': [{ ...vo('webapi', '/data/webapi'), source: 'docker', mounts: [] }] };
+    expect(resolveIdentity(raw, '1.1.1.1:22', '/data/webapi')).toBe('webapi');
+  });
+
+  it('systemd: unit 名剥离 .service 后缀', () => {
+    const raw = { '1.1.1.1:22': [vo('webapi.service', '/data/webapi')] };
+    expect(resolveIdentity(raw, '1.1.1.1:22', '/data/webapi')).toBe('webapi');
+  });
+
+  it('未命中路径返回空串', () => {
+    const raw = { '1.1.1.1:22': [vo('WebApiHost', 'D:/SMOM/Publish/WebApiHost')] };
+    expect(resolveIdentity(raw, '1.1.1.1:22', '/no/such/path')).toBe('');
+  });
+
+  it('空 path 返回空串', () => {
+    const raw = { '1.1.1.1:22': [vo('WebApiHost', 'D:/SMOM/Publish/WebApiHost')] };
+    expect(resolveIdentity(raw, '1.1.1.1:22', '')).toBe('');
+  });
+
+  it('服务器无枚举数据返回空串', () => {
+    expect(resolveIdentity({}, '1.1.1.1:22', 'D:/SMOM/Publish/WebApiHost')).toBe('');
   });
 });
 

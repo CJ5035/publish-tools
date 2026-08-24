@@ -44,6 +44,7 @@ export function defaultTfsName(tfsSourcePath: string): string {
 export interface ServiceTarget {
   serverKey: string;
   path: string;
+  identity?: string;
 }
 
 export interface EnvService {
@@ -159,6 +160,28 @@ export function matchServices(
     if (uniq.length > 0) candidates[svc] = uniq;
   }
   return { matched, candidates };
+}
+
+/**
+ * 从服务枚举结果反查发布路径对应的真实服务标识（Windows 服务名 / Docker 容器名 / systemd unit）。
+ * 命中 exec_dir === path 的 RemoteServiceVo 取其 name；systemd unit 名剥离 .service 后缀。
+ * 未命中 / 空 path / 无枚举数据返回 ''（由调用方决定回退）。
+ */
+export function resolveIdentity(
+  rawEnumerated: Record<string, RemoteServiceVo[]>,
+  serverKey: string,
+  path: string
+): string {
+  if (!path) return '';
+  const list = rawEnumerated[serverKey];
+  if (!Array.isArray(list)) return '';
+  const hit = list.find((s) => s.exec_dir === path);
+  if (!hit || !hit.name) return '';
+  let name = hit.name;
+  if (hit.source === 'service' && name.endsWith('.service')) {
+    name = name.slice(0, -'.service'.length);
+  }
+  return name;
 }
 
 export interface RematchInput {
