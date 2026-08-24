@@ -51,7 +51,7 @@
                 <el-input v-model="trow.path" :placeholder="t('message.appconfig.wizard.s4.pathPh')" style="flex:1;" />
                 <el-button size="small" type="danger" @click="svc.targets.splice(idx,1)">{{ t('message.appconfig.wizard.s4.delRow') }}</el-button>
               </div>
-              <el-button size="small" @click="svc.targets.push({ serverKey:'', path:'' })">{{ t('message.appconfig.wizard.s4.addRow') }}</el-button>
+              <el-button size="small" @click="svc.targets.push({ serverKey:'', path:'', identity:'' })">{{ t('message.appconfig.wizard.s4.addRow') }}</el-button>
             </template>
           </template>
         </div>
@@ -73,7 +73,7 @@ import { useAppconfigDb } from '@/database/appconfig';
 import { useSettingsDb } from '@/database/settings/index';
 import { useTfsDb } from '@/database/teamFoundationServer';
 import type { WizardDraft, EnvConfig } from './wizardTypes';
-import { SERVICE_NAMES, NORMAL_SERVICES, displayEnv, mergeConfigItems, resolveWpfServer } from './wizardTypes';
+import { SERVICE_NAMES, NORMAL_SERVICES, displayEnv, mergeConfigItems, resolveIdentity, resolveWpfServer } from './wizardTypes';
 
 const ENV_LIST = [1, 2, 3, 4];
 const emit = defineEmits<{ (e: 'switchEnv', env: number): void; (e: 'submitted', p: { env: number; mode: 'insert' | 'update' }): void }>();
@@ -168,7 +168,13 @@ function onServerChange(trow: any, svc: any) {
   }
   const used = new Set(svc.targets.map((x: any) => x.path).filter(Boolean));
   for (const p of paths) {
-    if (p && !used.has(p)) svc.targets.push({ serverKey: trow.serverKey, path: p });
+    if (p && !used.has(p)) svc.targets.push({ serverKey: trow.serverKey, path: p, identity: '' });
+  }
+  // 服务标识自动获取：按行路径反查扫描结果中的真实服务名（Windows 服务名 / Docker 容器名 / systemd unit）
+  for (const x of svc.targets) {
+    if (x.serverKey !== trow.serverKey || !x.path) continue;
+    const id = resolveIdentity(draft.rawEnumerated, trow.serverKey, x.path);
+    if (id) x.identity = id;
   }
 }
 
@@ -231,7 +237,7 @@ function buildConfigItems(env: number): RowAppconfigType {
     const svc = c.services.find((s) => s.name === name)!;
     const arr = svc.enabled ? svc.targets.map((trow: any) => {
       const srv = draft.servers.find((x) => `${x.ip}:${x.port}` === trow.serverKey)!;
-      return { id: srv.id, name: srv.name, serverPathArr: [{ label: '', value: [{ identity: trow.serverKey, path: trow.path }] }] };
+      return { id: srv.id, name: srv.name, serverPathArr: [{ label: '', value: [{ identity: trow.identity || trow.serverKey, path: trow.path }] }] };
     }) : [];
     items[name] = { clientPath: (draft.project.clientPaths as any)?.[name] ?? '', serverPath: '', serverIds: arr.map((a: any) => a.id), serverArr: arr };
   }
