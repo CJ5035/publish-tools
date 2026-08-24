@@ -223,6 +223,7 @@ import { formatDate } from "@/utils/formatTime";
 import { outPublishContents } from "@/utils/outPublishInfo";
 import { getDefaultSubObject, removeSlash, displayEnvironment } from "@/utils/other";
 import { getTfsDllFiles, getGitDllFiles, getReadAllDlls } from "@/utils/backupAppconfig";
+import { normalizeWpfClientServer } from "@/utils/wpfClientConfig";
 
 // 定义子组件向父组件传值/事件
 const emit = defineEmits(["refresh", "exec-application-assembly", "exec-done"]);
@@ -506,29 +507,6 @@ const openDialog = async (type: string, row: RowAppconfigType | undefined) => {
     console.log("应用配置数据：", state.ruleForm);
   });
   console.log(type);
-};
-
-// 存量兼容：旧单服务器配置归一化为多服务器结构
-const normalizeWpfClientServer = (wpfClient: WpfClientConfigType) => {
-  if (!wpfClient) return;
-  if (
-    (!wpfClient.serverArr || wpfClient.serverArr.length < 1) &&
-    wpfClient.serverId
-  ) {
-    wpfClient.serverIds = [wpfClient.serverId];
-    wpfClient.serverArr = [
-      {
-        id: wpfClient.serverId,
-        name: wpfClient.serverName,
-        serverPathArr: [
-          {
-            label: "",
-            value: [{ identity: "", path: wpfClient.serverPath || "" }],
-          },
-        ],
-      },
-    ];
-  }
 };
 
 // 本机发布初始数据
