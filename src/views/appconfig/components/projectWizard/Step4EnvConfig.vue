@@ -74,6 +74,7 @@ import { useSettingsDb } from '@/database/settings/index';
 import { useTfsDb } from '@/database/teamFoundationServer';
 import type { WizardDraft, EnvConfig } from './wizardTypes';
 import { SERVICE_NAMES, NORMAL_SERVICES, displayEnv, mergeConfigItems, resolveIdentity, resolveWpfServer } from './wizardTypes';
+import { makeWpfServerArrEntry } from "@/utils/wpfClientConfig";
 
 const ENV_LIST = [1, 2, 3, 4];
 const emit = defineEmits<{ (e: 'switchEnv', env: number): void; (e: 'submitted', p: { env: number; mode: 'insert' | 'update' }): void }>();
@@ -244,11 +245,15 @@ function buildConfigItems(env: number): RowAppconfigType {
   const wpf = c.services.find((s) => s.name === 'wpfClient')!;
   const wpfTarget = wpf.enabled ? wpf.targets[0] : null;
   const wpfSrv2 = wpfTarget ? draft.servers.find((x) => `${x.ip}:${x.port}` === wpfTarget.serverKey) : null;
+  // 补写多服务器结构（与弹窗形状一致）；mergeConfigItems 以向导字段为准，合并更新路径同样生效
+  const wpfSrvId = wpfSrv2?.id ?? null;
   items.wpfClient = {
     clientPath: (draft.project.clientPaths as any)?.wpfClient ?? '',
-    serverId: wpfSrv2?.id ?? null,
+    serverId: wpfSrvId,
     serverName: wpfSrv2?.name ?? null,
     serverPath: wpfTarget?.path ?? '',
+    serverIds: wpfSrvId !== null ? [wpfSrvId] : [],
+    serverArr: wpfSrvId !== null && wpfSrv2 ? [makeWpfServerArrEntry(wpfSrvId, wpfSrv2.name, wpfTarget?.path ?? '')] : [],
     isCompress: 1,
     generateDirJson: draft.project.isNewVersion ? '["Plugins"]' : '["Domain","UI"]',
     compressFileJson: '',

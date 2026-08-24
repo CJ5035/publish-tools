@@ -255,6 +255,28 @@ describe('mergeConfigItems', () => {
     expect(m.wpfClient.isCompress).toBe(1);
     expect(m.wpfClient.generateDirJson).toBe('["Plugins"]');
   });
+  it('wpfClient: 向导侧 serverIds/serverArr 胜出存量（补写后合并更新仍双结构一致）', () => {
+    const mk = (wpf: any): any => ({
+      isRebuild: 1, isBackup: 0, isNewVersion: false, backupBasePath: null,
+      webApiHost: {}, scheduleServer: {}, webClient: {}, spcMonitor: {},
+      wpfClient: wpf,
+    });
+    const existing = mk({
+      clientPath: 'c:/old', serverPath: '/opt/old', serverIds: [], serverArr: [],
+      serverId: 4, serverName: '华俊-测试', isCompress: 0,
+      generateDirJson: '["Domain","UI"]', compressFileJson: '',
+    });
+    const wizard = mk({
+      clientPath: 'c:/new', serverPath: '/opt/new', serverId: 4, serverName: '华俊-测试',
+      serverIds: [4],
+      serverArr: [{ id: 4, name: '华俊-测试', serverPathArr: [{ label: '', value: [{ identity: '', path: '/opt/new' }] }] }],
+      isCompress: 1, generateDirJson: '["Domain","UI"]', compressFileJson: '',
+    });
+    const merged: any = mergeConfigItems(existing, wizard);
+    expect(merged.wpfClient.serverIds).toEqual([4]);
+    expect(merged.wpfClient.serverArr).toHaveLength(1);
+    expect(merged.wpfClient.serverPath).toBe('/opt/new');
+  });
 });
 
 describe('draft 持久化', () => {
