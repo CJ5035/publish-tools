@@ -531,6 +531,7 @@ import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage } from "element-plus";
 import { detectTfsForSln, saveTfsRecord, findTfsDuplicate } from "@/utils/tfsDetect";
 import type { TfsDetectInfo } from "@/utils/tfsDetect";
+import { normalizeWpfClientServer, syncWpfClientLegacyFields } from "@/utils/wpfClientConfig";
 import { CirclePlus, Remove, Files } from "@element-plus/icons-vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import _ from "lodash";
@@ -941,33 +942,6 @@ const onWpfClientServerChange = async (val: number[]) => {
         },
       ],
     });
-  }
-};
-
-// 存量兼容：旧单服务器配置归一化为多服务器结构
-const normalizeWpfClientServer = (wpfClient: WpfClientConfigType) => {
-  if (!wpfClient) return;
-  // 旧数据可能没有 serverIds/serverArr 字段（serverId 为 null 时），先补齐为数组，
-  // 避免切换监听中访问 serverArr.length 时报错导致发布路径输入项不显示
-  if (!wpfClient.serverIds) wpfClient.serverIds = [];
-  if (!wpfClient.serverArr) wpfClient.serverArr = [];
-  if (
-    wpfClient.serverArr.length < 1 &&
-    wpfClient.serverId
-  ) {
-    wpfClient.serverIds = [wpfClient.serverId];
-    wpfClient.serverArr = [
-      {
-        id: wpfClient.serverId,
-        name: wpfClient.serverName,
-        serverPathArr: [
-          {
-            label: "",
-            value: [{ identity: "", path: wpfClient.serverPath || "" }],
-          },
-        ],
-      },
-    ];
   }
 };
 
@@ -1402,6 +1376,9 @@ const onCancel = () => {
 
 // 提交
 const onSubmit = async () => {
+  // 新→旧回写（诊断 20260824）：发布链路与发布页展示读 serverId/serverName/serverPath，
+  // 不回写则弹窗改的发布路径/换绑服务器不生效于发布
+  syncWpfClientLegacyFields(state.ruleForm.configItems.wpfClient);
   state.ruleForm.configItemsJson = JSON.stringify(state.ruleForm.configItems);
   if (state.ruleForm.dllMode == "TFS") {
     const selectedItem = _.cloneDeep(selectTfsItem.value) as SelectTfsType;
