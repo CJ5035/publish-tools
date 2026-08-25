@@ -2088,6 +2088,14 @@ const switchWinService = async (
     const stopped = await isWinServiceStop(username, password, server, serviceName);
     if (action === "stop" && stopped) return true;
     if (action === "start" && !stopped) return true;
+    // 每 10 次迭代（约每 20s）输出一次等待进度
+    if ((i + 1) % 10 === 0) {
+      printInfoLog(
+        `等待服务${action === "stop" ? "停止" : "启动"}…已等待 ${
+          (i + 1) * (retryInterval / 1000)
+        } s（最长 300s）`
+      );
+    }
   }
 
   printInfoLog(
