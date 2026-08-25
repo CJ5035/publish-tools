@@ -304,7 +304,7 @@ import {
 } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import _ from "lodash";
-import { Refresh, CircleClose, EditPen, QuestionFilled, VideoPause, VideoPlay, Close } from "@element-plus/icons-vue";
+import { Refresh, CircleClose, EditPen, VideoPause, VideoPlay, Close } from "@element-plus/icons-vue";
 import { useRouter } from "vue-router";
 import { useProjectDb } from "@/database/project/index";
 import { useAppconfigDb } from "@/database/appconfig/index";
@@ -414,12 +414,6 @@ const webClientName = ref("WebClient");
 const wpfClientName = ref("WpfClient");
 const spcMonitorName = ref("SpcMonitor");
 const projectAssemblyOutPath = ref("");
-// 异步上传模式
-const isAsyncMode = ref(false);
-// Task 5 模板重写已移除"异步上传"开关与其 tooltip；isAsyncMode/QuestionFilled 由 Task 8 清理，
-// 此处显式标记避免 noUnusedLocals 报错（沿用 Task 3 对 onRemoveSection 的处理方式）
-void isAsyncMode;
-void QuestionFilled;
 // 应用类型发布状态徽标（失败续发语义：published 跳过；重置收口在 getPublishAppconfigs）
 const publishStatus = reactive<PublishStatusMap>({
   webApiHost: "pending",
@@ -3915,7 +3909,6 @@ $homeNavLengh: 8;
       }
 
       .card-item-content {
-        height: calc(100vh - 308px);
         overflow-y: auto;
         padding: 10px;
 
