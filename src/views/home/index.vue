@@ -264,6 +264,9 @@
                 </el-col>
               </el-row>
             </div>
+            <div class="log-toolbar" v-if="logPrintInfo.length > 0">
+              <el-button size="small" @click="copyLogs">复制日志</el-button>
+            </div>
             <div ref="logContentRef" class="card-item-content log-content">
               <p v-for="log in logPrintInfo" :class="log.type">
                 {{ log.content.value }}
@@ -321,6 +324,7 @@ import {
 } from "@/utils/other";
 import { formatDate } from "@/utils/formatTime";
 import { cmdInvoke } from "@/utils/command";
+import { createLogStore } from "./publishLogStore";
 import { path } from "@tauri-apps/api";
 import { loadBackupItems } from "@/utils/backupAppconfig";
 import { backupRemoteServer } from "@/utils/backupAppconfig";
@@ -472,7 +476,8 @@ const sectionBadgeText = (section: AppSectionLike): string => {
   }
 };
 const logContentRef = ref();
-const logPrintInfo = ref<LogPrintType[]>([]);
+const logStore = createLogStore(2000);
+const logPrintInfo = logStore.logs;
 const generatePublishLog = ref({
   isEnable: true,
   type: "默认",
@@ -886,15 +891,15 @@ const publishBeforeBackup = async (id: number) => {
 
   // 备份[WebApiHost]
   if (backupData.backupItems.webApiHost && backupData.backupItems.webApiHost.length > 0) {
-    const currLogIndex = printInfoLog(`正在备份 ${webApiHostName.value}.`);
+    const currLog = printInfoLog(`正在备份 ${webApiHostName.value}.`);
     const backupWebApiHostResult = await backupRemoteServer(
       "WebApiHost",
       backupData.backupItems.webApiHost,
       (uploadFile: UploadFileNumberType) => {
-        logPrintInfo.value[currLogIndex].content.uploadFile.prefix = uploadFile.prefix;
-        logPrintInfo.value[currLogIndex].content.uploadFile.currNumber =
+        currLog.content.uploadFile.prefix = uploadFile.prefix;
+        currLog.content.uploadFile.currNumber =
           uploadFile.currNumber;
-        logPrintInfo.value[currLogIndex].content.uploadFile.totalNumber =
+        currLog.content.uploadFile.totalNumber =
           uploadFile.totalNumber;
       }
     );
@@ -913,15 +918,15 @@ const publishBeforeBackup = async (id: number) => {
     backupData.backupItems.scheduleServer &&
     backupData.backupItems.scheduleServer.length > 0
   ) {
-    const currLogIndex = printInfoLog(`正在备份 ${scheduleServerName.value}.`);
+    const currLog = printInfoLog(`正在备份 ${scheduleServerName.value}.`);
     const backupScheduleServerResult = await backupRemoteServer(
       "ScheduleServer",
       backupData.backupItems.scheduleServer,
       (uploadFile: UploadFileNumberType) => {
-        logPrintInfo.value[currLogIndex].content.uploadFile.prefix = uploadFile.prefix;
-        logPrintInfo.value[currLogIndex].content.uploadFile.currNumber =
+        currLog.content.uploadFile.prefix = uploadFile.prefix;
+        currLog.content.uploadFile.currNumber =
           uploadFile.currNumber;
-        logPrintInfo.value[currLogIndex].content.uploadFile.totalNumber =
+        currLog.content.uploadFile.totalNumber =
           uploadFile.totalNumber;
       }
     );
@@ -937,15 +942,15 @@ const publishBeforeBackup = async (id: number) => {
 
   // 备份[WebClient]
   if (backupData.backupItems.webClient && backupData.backupItems.webClient.length > 0) {
-    const currLogIndex = printInfoLog(`正在备份 ${webClientName.value}.`);
+    const currLog = printInfoLog(`正在备份 ${webClientName.value}.`);
     const backupWebClientResult = await backupRemoteServer(
       "WebClient",
       backupData.backupItems.webClient,
       (uploadFile: UploadFileNumberType) => {
-        logPrintInfo.value[currLogIndex].content.uploadFile.prefix = uploadFile.prefix;
-        logPrintInfo.value[currLogIndex].content.uploadFile.currNumber =
+        currLog.content.uploadFile.prefix = uploadFile.prefix;
+        currLog.content.uploadFile.currNumber =
           uploadFile.currNumber;
-        logPrintInfo.value[currLogIndex].content.uploadFile.totalNumber =
+        currLog.content.uploadFile.totalNumber =
           uploadFile.totalNumber;
       }
     );
@@ -961,15 +966,15 @@ const publishBeforeBackup = async (id: number) => {
 
   // 备份[WpfClient]
   if (backupData.backupItems.wpfClient && backupData.backupItems.wpfClient.length > 0) {
-    const currLogIndex = printInfoLog(`正在备份 ${wpfClientName.value}.`);
+    const currLog = printInfoLog(`正在备份 ${wpfClientName.value}.`);
     const backupWpfClientResult = await backupRemoteServer(
       "WpfClient",
       backupData.backupItems.wpfClient,
       (uploadFile: UploadFileNumberType) => {
-        logPrintInfo.value[currLogIndex].content.uploadFile.prefix = uploadFile.prefix;
-        logPrintInfo.value[currLogIndex].content.uploadFile.currNumber =
+        currLog.content.uploadFile.prefix = uploadFile.prefix;
+        currLog.content.uploadFile.currNumber =
           uploadFile.currNumber;
-        logPrintInfo.value[currLogIndex].content.uploadFile.totalNumber =
+        currLog.content.uploadFile.totalNumber =
           uploadFile.totalNumber;
       },
       Boolean(state.publishData.appconfigData.configItems.isNewVersion)
@@ -986,12 +991,12 @@ const publishBeforeBackup = async (id: number) => {
 
   // 备份[SpcMonitor]
   if (backupData.backupItems.spcMonitor && backupData.backupItems.spcMonitor.length > 0) {
-    const currLogIndex = printInfoLog(`正在备份 ${spcMonitorName.value}.`);
+    const currLog = printInfoLog(`正在备份 ${spcMonitorName.value}.`);
     const backupSpcMonitorResult = await backupRemoteServer(
       "SpcMonitor",
       backupData.backupItems.spcMonitor,
       (uploadFileNumber: UploadFileNumberType) => {
-        logPrintInfo.value[currLogIndex].content.uploadFile = uploadFileNumber;
+        currLog.content.uploadFile = uploadFileNumber;
       }
     );
     if (backupSpcMonitorResult.code !== 0) {
@@ -1203,7 +1208,7 @@ const publishScheduleServer = async () => {
         await deployRecorder?.done(detailId, "running", { step: "upload" });
 
         /* 上传文件到服务器 */
-        const currLogIndex = printInfoLog(`服务 ${scheduleServerName.value} 正在发布.`);
+        const currLog = printInfoLog(`服务 ${scheduleServerName.value} 正在发布.`);
 
         // 获取项目输出路径
         let localPath = projectAssemblyOutPath.value + "/" + scheduleServerName.value;
@@ -1255,10 +1260,10 @@ const publishScheduleServer = async () => {
             return false;
           }
           uploadFileNumber.currNumber++;
-          logPrintInfo.value[currLogIndex].content.uploadFile.prefix = uploadFileNumber.prefix;
-          logPrintInfo.value[currLogIndex].content.uploadFile.currNumber =
+          currLog.content.uploadFile.prefix = uploadFileNumber.prefix;
+          currLog.content.uploadFile.currNumber =
             uploadFileNumber.currNumber;
-          logPrintInfo.value[currLogIndex].content.uploadFile.totalNumber =
+          currLog.content.uploadFile.totalNumber =
             uploadFileNumber.totalNumber;
         }
 
@@ -1931,7 +1936,7 @@ const serverPublish = async (
       await deployRecorder?.done(detailId, "running", { step: "upload" });
 
       /* 上传文件到服务器 */
-      const currLogIndex = printInfoLog(`服务 ${serverName} 正在发布.`);
+      const currLog = printInfoLog(`服务 ${serverName} 正在发布.`);
 
       // 获取项目输出路径
       let localPath = projectAssemblyOutPath.value + "/" + serverName;
@@ -1979,11 +1984,11 @@ const serverPublish = async (
           return false;
         }
         uploadFileNumber.currNumber++;
-        logPrintInfo.value[currLogIndex].content.uploadFile.prefix =
+        currLog.content.uploadFile.prefix =
           uploadFileNumber.prefix;
-        logPrintInfo.value[currLogIndex].content.uploadFile.currNumber =
+        currLog.content.uploadFile.currNumber =
           uploadFileNumber.currNumber;
-        logPrintInfo.value[currLogIndex].content.uploadFile.totalNumber =
+        currLog.content.uploadFile.totalNumber =
           uploadFileNumber.totalNumber;
       }
       printInfoLog(
@@ -3681,7 +3686,7 @@ const onEnvironmentChange = async (val: number) => {
 
 // 清空日志
 const onRemoveLogs = () => {
-  logPrintInfo.value = [];
+  logStore.clear();
   generatePublishLog.value.data = "";
   generatePublishLog.value.logs = "";
 };
@@ -3808,26 +3813,22 @@ const printInfoLog = (
   type: "log-info" | "log-warning" | "log-error" | "log-success" = "log-info",
   showDate: boolean = true
 ) => {
-  let nowDate = "";
-  if (showDate) {
-    nowDate = `[${formatDate(new Date(), "YYYY-mm-dd HH:MM:SS")}] `;
-  }
-  let logContent = content ? `${nowDate}${content}` : "　";
-  let logInfo: LogPrintType = {
-    type,
-    content: {
-      value: logContent,
-      uploadFile: {
-        currNumber: 0,
-        totalNumber: 0,
-      },
-    },
-  };
-  logPrintInfo.value.push(logInfo);
+  const logInfo = logStore.print(content, type, showDate);
   nextTick(() => {
     logContentRef.value.scrollTop = logContentRef.value.scrollHeight;
   });
-  return logPrintInfo.value.length - 1;
+  return logInfo;
+};
+
+// 复制日志到剪贴板
+const copyLogs = async () => {
+  const text = logPrintInfo.value.map(log => log.content.value).join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success("日志已复制");
+  } catch {
+    ElMessage.warning("复制失败，请手动选择复制");
+  }
 };
 
 // 页面加载完时
@@ -4065,6 +4066,12 @@ $homeNavLengh: 8;
         i {
           color: var(--el-text-color-placeholder);
         }
+      }
+
+      .log-toolbar {
+        padding: 4px 10px;
+        text-align: right;
+        background: #545c64;
       }
 
       .log-content {
