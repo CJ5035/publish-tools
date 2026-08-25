@@ -640,55 +640,59 @@ const onFunModuleHandle = async (index: number) => {
   state.publishData.publishPaused = false;
   state.publishData.resumeResolve = null;
   state.funModule[origIndex].loading = true;
-  currModuleIndex.value = origIndex;
-  initLogs();
-  if (title === "一键发布" || title === "获取程序集" || title === "手动发布") {
-    const validateTfsLocalPathResult = await validateTfsLocalPath();
-    if (!validateTfsLocalPathResult) {
-      state.funModule[origIndex].loading = false;
-      return;
+  // loading 复位收口到 finally：任一 await 抛异常（如编译项目/获取程序集无 try/catch 分支）
+  // 都必须复位，否则 uiLocked 的 .some(m => m.loading) 会永久锁死整页
+  try {
+    currModuleIndex.value = origIndex;
+    initLogs();
+    if (title === "一键发布" || title === "获取程序集" || title === "手动发布") {
+      const validateTfsLocalPathResult = await validateTfsLocalPath();
+      if (!validateTfsLocalPathResult) {
+        return;
+      }
     }
+    // 加载发布设置缓存（供后续 copy_path / 服务停止启动 调用点 getRetryArgs 使用）
+    await loadPublishSettings();
+    projectAssemblyOutPath.value = await getProjectOutPath();
+    switch (title) {
+      case "一键发布":
+        try {
+          const oneClickPublishResult = await oneClickPublishing();
+          if (oneClickPublishResult) printInfoLog("一键发布成功。");
+        } catch (e: any) {
+          if (e?.message === "PUBLISH_STOPPED") {
+            printInfoLog("发布已停止.", "log-warning");
+          }
+        }
+        break;
+      case "编译项目":
+        const buildProjectsResult = await buildProjects();
+        if (buildProjectsResult)
+          printInfoLog("编译项目成功，可以尝试：获取程序集、手动发布。");
+        break;
+      case "获取程序集":
+        const getAppAssemblysResult = await getApplicationAssemblys(true);
+        if (getAppAssemblysResult) printInfoLog("获取程序集成功。");
+        break;
+      case "手动发布":
+        try {
+          const publishResult = await projectPublish();
+          if (publishResult) {
+            printInfoLog("手动发布成功。");
+            await getProjectDefault();
+          }
+        } catch (e: any) {
+          if (e?.message === "PUBLISH_STOPPED") {
+            printInfoLog("发布已停止.", "log-warning");
+          }
+        }
+        break;
+    }
+    printInfoLog("");
+    printInfoLog(generatePublishLog.value.logs, "log-info");
+  } finally {
+    state.funModule[origIndex].loading = false;
   }
-  // 加载发布设置缓存（供后续 copy_path / 服务停止启动 调用点 getRetryArgs 使用）
-  await loadPublishSettings();
-  projectAssemblyOutPath.value = await getProjectOutPath();
-  switch (title) {
-    case "一键发布":
-      try {
-        const oneClickPublishResult = await oneClickPublishing();
-        if (oneClickPublishResult) printInfoLog("一键发布成功。");
-      } catch (e: any) {
-        if (e?.message === "PUBLISH_STOPPED") {
-          printInfoLog("发布已停止.", "log-warning");
-        }
-      }
-      break;
-    case "编译项目":
-      const buildProjectsResult = await buildProjects();
-      if (buildProjectsResult)
-        printInfoLog("编译项目成功，可以尝试：获取程序集、手动发布。");
-      break;
-    case "获取程序集":
-      const getAppAssemblysResult = await getApplicationAssemblys(true);
-      if (getAppAssemblysResult) printInfoLog("获取程序集成功。");
-      break;
-    case "手动发布":
-      try {
-        const publishResult = await projectPublish();
-        if (publishResult) {
-          printInfoLog("手动发布成功。");
-          await getProjectDefault();
-        }
-      } catch (e: any) {
-        if (e?.message === "PUBLISH_STOPPED") {
-          printInfoLog("发布已停止.", "log-warning");
-        }
-      }
-      break;
-  }
-  printInfoLog("");
-  printInfoLog(generatePublishLog.value.logs, "log-info");
-  state.funModule[origIndex].loading = false;
   generatePublishLog.value.data = "";
   generatePublishLog.value.logs = "";
 };
