@@ -345,6 +345,7 @@ import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { createDeployRecorder } from "@/utils/deployTaskRecorder";
 import { classifyWpfDlls } from "@/utils/wpfDllClassify";
+import { safeJsonParse } from "@/utils/safeJsonParse";
 import {
   buildAppSections,
   filterAppconfigForDialog,
@@ -690,9 +691,15 @@ const validateTfsLocalPath = async () => {
     return false;
   }
 
-  const selectTfsItem = JSON.parse(
-    state.publishData.appconfigData.dllModeValue
-  ) as SelectTfsType;
+  // 解析失败走下方原有失败分支（与"未配置TFS"同路径），不再以异常中断校验
+  const selectTfsItem = safeJsonParse<SelectTfsType | null>(
+    state.publishData.appconfigData.dllModeValue,
+    null
+  );
+  if (!selectTfsItem) {
+    printInfoLog(`当前发布配置使用TFS获取dll，但配置信息损坏无法解析，请重新选择.`, "log-error");
+    return false;
+  }
   const tfsItem = await getTfsDetail(Number(selectTfsItem.id));
   if (tfsItem?.tfsLocalPath) return true;
 
@@ -1330,12 +1337,15 @@ const newPublishWpfClient = async () => {
   );
 
   // 获取[生成目录]
-  let generateDirs = new Array<string>();
   if (!wpfClientItem.generateDirJson) {
     printInfoLog(`服务[${wpfClientName.value}]未配置[生成目录]，请检查.`, "log-error");
     return false;
   }
-  generateDirs = JSON.parse(wpfClientItem.generateDirJson);
+  const generateDirs = safeJsonParse<string[] | null>(wpfClientItem.generateDirJson, null);
+  if (!generateDirs) {
+    printInfoLog(`服务[${wpfClientName.value}]的[生成目录]配置损坏无法解析，请重新选择[生成的目录].`, "log-error");
+    return false;
+  }
 
   // 创建一个临时发布目录
   const tempPublishDir = `${projectAssemblyOutPath.value}/${wpfClientName.value}/tempPublish`;
@@ -1555,12 +1565,15 @@ const publishWpfClient = async () => {
   );
 
   // 获取[生成目录]
-  let generateDirs = new Array<string>();
   if (!wpfClientItem.generateDirJson) {
     printInfoLog(`服务[${wpfClientName.value}]未配置[生成目录]，请检查.`, "log-error");
     return false;
   }
-  generateDirs = JSON.parse(wpfClientItem.generateDirJson);
+  const generateDirs = safeJsonParse<string[] | null>(wpfClientItem.generateDirJson, null);
+  if (!generateDirs) {
+    printInfoLog(`服务[${wpfClientName.value}]的[生成目录]配置损坏无法解析，请重新选择[生成的目录].`, "log-error");
+    return false;
+  }
 
   // 创建一个临时发布目录
   const tempPublishDir = `${projectAssemblyOutPath.value}/${wpfClientName.value}/tempPublish`;
@@ -2327,9 +2340,15 @@ const getDllModeDateRange = () => {
     endDate = formatDate(new Date(), "YYYY-mm-dd 23:59:59");
   }
   if (state.publishData.appconfigData.dllMode == "日期范围") {
-    const modeDates = JSON.parse(String(state.publishData.appconfigData.dllModeValue));
-    startDate = modeDates[0];
-    endDate = modeDates[1];
+    // 解析失败保持 startDate/endDate 为空，走下方原有 `return []` 分支
+    const modeDates = safeJsonParse<string[] | null>(
+      state.publishData.appconfigData.dllModeValue,
+      null
+    );
+    if (modeDates) {
+      startDate = modeDates[0];
+      endDate = modeDates[1];
+    }
   }
   if (!startDate || !endDate) return [];
   return [startDate, endDate];
@@ -2376,8 +2395,12 @@ const newCopyWpfAssemblyFile = async (
 
   try {
     let dllModeDateRange = getDllModeDateRange();
-    // 1.[生成目录]
-    let generateDirArr = JSON.parse(appConfig.generateDirJson);
+    // 1.[生成目录]（上方已守卫非空；损坏无法解析时走失败分支，不再以异常中断）
+    const generateDirArr = safeJsonParse<string[] | null>(appConfig.generateDirJson, null);
+    if (!generateDirArr) {
+      printInfoLog(`${wpfClientName.value} 的[生成目录]配置损坏无法解析，请重新选择[生成的目录].`, "log-error");
+      return false;
+    }
     for (let i = 0; i < generateDirArr.length; i++) {
       const generateDir = generateDirArr[i];
       // 验证目录是否存在
@@ -2420,9 +2443,14 @@ const newCopyWpfAssemblyFile = async (
           printInfoLog(`未配置TFS获取程序集的相关信息，请检查.`, "log-error");
           return false;
         }
-        const selectTfsItem = JSON.parse(
-          state.publishData.appconfigData.dllModeValue
-        ) as SelectTfsType;
+        const selectTfsItem = safeJsonParse<SelectTfsType | null>(
+          state.publishData.appconfigData.dllModeValue,
+          null
+        );
+        if (!selectTfsItem) {
+          printInfoLog(`TFS获取程序集的配置信息损坏无法解析，请重新选择.`, "log-error");
+          return false;
+        }
         const tfsDllFiles = await getTfsDllFiles(selectTfsItem);
         if (!tfsDllFiles || tfsDllFiles.length < 1) return false;
 
@@ -2488,7 +2516,11 @@ const newCopyWpfAssemblyFile = async (
         return false;
       }
 
-      let compressFileArr = JSON.parse(appConfig.compressFileJson);
+      const compressFileArr = safeJsonParse<string[] | null>(appConfig.compressFileJson, null);
+      if (!compressFileArr) {
+        printInfoLog(`${wpfClientName.value} 的打包(压缩)文件配置损坏无法解析，请重新选择要打包(压缩)文件.`, "log-error");
+        return false;
+      }
       if (compressFileArr.includes("Plugins.zip")) {
         const pluginsPath = `${removeSlash(appConfig.clientPath)}/Plugins`;
         const pluginsZipResult = await cmdInvoke("zip_dir", {
@@ -2787,8 +2819,12 @@ const copyWpfAssemblyFile = async (
         );
       }
     }
-    // 1.[生成目录]
-    let generateDirArr = JSON.parse(appConfig.generateDirJson);
+    // 1.[生成目录]（前方已守卫非空；损坏无法解析时走失败分支，不再以异常中断）
+    const generateDirArr = safeJsonParse<string[] | null>(appConfig.generateDirJson, null);
+    if (!generateDirArr) {
+      printInfoLog(`${wpfClientName.value} 的[生成目录]配置损坏无法解析，请重新选择[生成的目录].`, "log-error");
+      return false;
+    }
     for (let i = 0; i < generateDirArr.length; i++) {
       const generateDir = generateDirArr[i];
       // 验证目录是否存在
@@ -2813,9 +2849,14 @@ const copyWpfAssemblyFile = async (
           printInfoLog(`未配置TFS获取程序集的相关信息，请检查.`, "log-error");
           return false;
         }
-        const selectTfsItem = JSON.parse(
-          state.publishData.appconfigData.dllModeValue
-        ) as SelectTfsType;
+        const selectTfsItem = safeJsonParse<SelectTfsType | null>(
+          state.publishData.appconfigData.dllModeValue,
+          null
+        );
+        if (!selectTfsItem) {
+          printInfoLog(`TFS获取程序集的配置信息损坏无法解析，请重新选择.`, "log-error");
+          return false;
+        }
         const tfsDllFiles = await getTfsDllFiles(selectTfsItem);
         if (!tfsDllFiles || tfsDllFiles.length < 1) return false;
 
@@ -2880,7 +2921,11 @@ const copyWpfAssemblyFile = async (
         );
         return false;
       }
-      let compressFileArr = JSON.parse(appConfig.compressFileJson);
+      const compressFileArr = safeJsonParse<string[] | null>(appConfig.compressFileJson, null);
+      if (!compressFileArr) {
+        printInfoLog(`${wpfClientName.value} 的打包(压缩)文件配置损坏无法解析，请重新选择要打包(压缩)文件.`, "log-error");
+        return false;
+      }
       if (compressFileArr.includes("Plugins.zip")) {
         const domainPath = `${removeSlash(appConfig.clientPath)}/Domain`;
         const uiPath = `${removeSlash(appConfig.clientPath)}/UI`;
@@ -3093,9 +3138,14 @@ const copyAssemblyFile = async (
         printInfoLog(`未配置TFS获取程序集的相关信息，请检查.`, "log-error");
         return false;
       }
-      const selectTfsItem = JSON.parse(
-        state.publishData.appconfigData.dllModeValue
-      ) as SelectTfsType;
+      const selectTfsItem = safeJsonParse<SelectTfsType | null>(
+        state.publishData.appconfigData.dllModeValue,
+        null
+      );
+      if (!selectTfsItem) {
+        printInfoLog(`TFS获取程序集的配置信息损坏无法解析，请重新选择.`, "log-error");
+        return false;
+      }
       const tfsDllFiles = await getTfsDllFiles(selectTfsItem);
       if (!tfsDllFiles || tfsDllFiles.length < 1) return false;
       for (let o = 0; o < tfsDllFiles.length; o++) {
@@ -3113,9 +3163,14 @@ const copyAssemblyFile = async (
         printInfoLog(`未配置Git获取程序集的相关信息，请检查.`, "log-error");
         return false;
       }
-      const selectGitItem = JSON.parse(
-        state.publishData.appconfigData.dllModeValue
-      ) as SelectGitType;
+      const selectGitItem = safeJsonParse<SelectGitType | null>(
+        state.publishData.appconfigData.dllModeValue,
+        null
+      );
+      if (!selectGitItem) {
+        printInfoLog(`Git获取程序集的配置信息损坏无法解析，请重新选择.`, "log-error");
+        return false;
+      }
       const gitDllFiles = await getGitDllFiles(selectGitItem);
       console.log('gitDllFiles', gitDllFiles);
       if (!gitDllFiles || gitDllFiles.length < 1) return false;
@@ -3413,9 +3468,12 @@ const getGitDllFiles = async (selectGitItem: SelectGitType) => {
 const getPublishLogResolveOptions = async (): Promise<DllResolveOptions> => {
   if (!state.publishData.appconfigData.dllModeValue) return {};
   if (state.publishData.appconfigData.dllMode === "TFS") {
-    const selectTfsItem = JSON.parse(
-      state.publishData.appconfigData.dllModeValue
-    ) as SelectTfsType;
+    // 解析失败走与"未配置 dllModeValue"相同的降级分支（返回空选项），safeJsonParse 已输出告警日志
+    const selectTfsItem = safeJsonParse<SelectTfsType | null>(
+      state.publishData.appconfigData.dllModeValue,
+      null
+    );
+    if (!selectTfsItem) return {};
     const tfsItem = await getTfsDetail(Number(selectTfsItem.id));
     return {
       repositoryPath: tfsItem?.tfsLocalPath,
@@ -3423,9 +3481,11 @@ const getPublishLogResolveOptions = async (): Promise<DllResolveOptions> => {
     };
   }
   if (state.publishData.appconfigData.dllMode === "Git") {
-    const selectGitItem = JSON.parse(
-      state.publishData.appconfigData.dllModeValue
-    ) as SelectGitType;
+    const selectGitItem = safeJsonParse<SelectGitType | null>(
+      state.publishData.appconfigData.dllModeValue,
+      null
+    );
+    if (!selectGitItem) return {};
     const gitItem = await getGitDetail(Number(selectGitItem.id));
     return { repositoryPath: gitItem?.gitRepository };
   }
@@ -3617,28 +3677,40 @@ const restoreEnvironmentFromStorage = (projectId: number): number | null => {
 const showDllMode = () => {
   let modelName = state.publishData.appconfigData.dllMode;
   if (modelName == "日期范围") {
-    let dllModeArr = JSON.parse(String(state.publishData.appconfigData.dllModeValue));
-    modelName += `：${dllModeArr[0]} ~ ${dllModeArr[1]}`;
+    // 解析失败仅展示模式名（safeJsonParse 已输出告警日志），不再以异常打断渲染
+    const dllModeArr = safeJsonParse<string[] | null>(
+      state.publishData.appconfigData.dllModeValue,
+      null
+    );
+    if (dllModeArr && dllModeArr.length >= 2) {
+      modelName += `：${dllModeArr[0]} ~ ${dllModeArr[1]}`;
+    }
   } else if (modelName == "TFS") {
-    const selectTfsItem = JSON.parse(
-      String(state.publishData.appconfigData.dllModeValue)
-    ) as SelectTfsType;
-    modelName += `：${selectTfsItem.tfsName}；${selectTfsItem.selectModel}：${selectTfsItem.selectValue[0].value} ~ `;
-    if (selectTfsItem.selectValue[1].value) {
-      modelName += `${selectTfsItem.selectValue[1].value}`;
-    } else {
-      modelName += "latest";
+    const selectTfsItem = safeJsonParse<SelectTfsType | null>(
+      state.publishData.appconfigData.dllModeValue,
+      null
+    );
+    if (selectTfsItem) {
+      modelName += `：${selectTfsItem.tfsName}；${selectTfsItem.selectModel}：${selectTfsItem.selectValue[0].value} ~ `;
+      if (selectTfsItem.selectValue[1].value) {
+        modelName += `${selectTfsItem.selectValue[1].value}`;
+      } else {
+        modelName += "latest";
+      }
     }
   }
   else if (modelName == "Git") {
-    const selectGitItem = JSON.parse(
-      String(state.publishData.appconfigData.dllModeValue)
-    ) as SelectGitType;
-    modelName += `：${selectGitItem.gitName}；${selectGitItem.selectModel}：${selectGitItem.selectValue[0].value} ~ `;
-    if (selectGitItem.selectValue[1].value) {
-      modelName += `${selectGitItem.selectValue[1].value}`;
-    } else {
-      modelName += "latest";
+    const selectGitItem = safeJsonParse<SelectGitType | null>(
+      state.publishData.appconfigData.dllModeValue,
+      null
+    );
+    if (selectGitItem) {
+      modelName += `：${selectGitItem.gitName}；${selectGitItem.selectModel}：${selectGitItem.selectValue[0].value} ~ `;
+      if (selectGitItem.selectValue[1].value) {
+        modelName += `${selectGitItem.selectValue[1].value}`;
+      } else {
+        modelName += "latest";
+      }
     }
   }
   else if (modelName == "DLL名称") {

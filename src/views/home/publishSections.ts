@@ -1,4 +1,6 @@
 // 发布页应用类型面板的数据模型（纯函数，供 home/index.vue 消费）
+import { safeJsonParse } from "@/utils/safeJsonParse";
+
 // 应用类型 key = configItems 字段名
 export type AppTypeKey = "webApiHost" | "scheduleServer" | "webClient" | "wpfClient" | "spcMonitor";
 // 面板状态徽标：待发布/发布中/已发布/发布失败/已移除
@@ -64,15 +66,12 @@ const PASCAL: Record<AppTypeKey, string> = {
   spcMonitor: "SpcMonitor",
 };
 
-// JSON 数组字段的安全解析：损坏返回 []（原模板 showGenerateDir/showCompressFile 为裸 parse）
+// JSON 数组字段的安全解析：损坏返回 []（原模板 showGenerateDir/showCompressFile 为裸 parse；
+// 现基于全局 safeJsonParse 实现，避免两套安全解析并存漂移；空值早退保持无告警的原有行为）
 const safeParseArray = (raw: string | null | undefined): string[] => {
   if (!raw) return [];
-  try {
-    const v = JSON.parse(String(raw));
-    return Array.isArray(v) ? v.map(String) : [];
-  } catch {
-    return [];
-  }
+  const parsed = safeJsonParse<string[]>(raw, []);
+  return Array.isArray(parsed) ? parsed.map(String) : [];
 };
 
 const countPaths = (servers: AppSectionServer[]): number => servers.reduce((n, s) => n + s.paths.length, 0);
