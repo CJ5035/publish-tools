@@ -41,23 +41,22 @@
           <div class="card-item-box">
             <div class="card-title">
               <el-row>
-                <el-col :span="12">发布信息</el-col>
+                <el-col :span="12">
+                  发布信息
+                  <el-tag v-if="isScheduledRunning" type="warning" effect="light" size="small"
+                    class="scheduled-running-banner">⏱ 定时发布执行中，请稍候</el-tag>
+                </el-col>
                 <el-col :span="12">
                   <div class="item-btn-box">
-                    <!-- :disabled="
-                        state.funModule[currModuleIndex].loading == true ||
-                        state.publishData.appconfigData.id == null ||
-                        state.publishData.appconfigData.id <= 0
-                      " -->
-                    <el-button size="small" title="生成SMOM发布文件" text @click="onGeneratePublish">
+                    <el-button size="small" title="生成SMOM发布文件" text :disabled="uiLocked" @click="onGeneratePublish">
                       <svg-icon :size="32" color="#606266" title="生成SMOM发布文件" name="smom-icon smom-icon-shengchengqi" />
                     </el-button>
-                    <el-button title="修改应用配置" size="small" text :icon="EditPen" :disabled="state.funModule[currModuleIndex].loading == true ||
+                    <el-button title="修改应用配置" size="small" text :icon="EditPen" :disabled="uiLocked ||
                       state.publishData.appconfigData.id == null ||
                       state.publishData.appconfigData.id <= 0
                       " @click="onOpenAppConfig"></el-button>
                     <el-button title="刷新|重置" size="small" text :icon="Refresh"
-                      :disabled="state.funModule[currModuleIndex].loading == true"
+                      :disabled="uiLocked"
                       @click="getProjectDefault({ keepCurrentEnvironment: true })"></el-button>
                   </div>
                 </el-col>
@@ -67,7 +66,7 @@
               <el-row>
                 <el-col :span="24">
                   <el-select filterable placeholder="请选择要发布的项目" size="default" v-model="state.publishData.projectId"
-                    class="mb15" :disabled="state.funModule[currModuleIndex].loading == true" @change="onProjectChange">
+                    class="mb15" :disabled="uiLocked" @change="onProjectChange">
                     <el-option v-for="project in projectList" :key="project.id" :label="project.name"
                       :value="project.id" />
                   </el-select>
@@ -76,7 +75,7 @@
 
               <div class="card-item-env" v-if="envOptions.length > 0">
                 <el-radio-group size="default" @change="onEnvironmentChange" v-model="state.publishData.environment"
-                  :disabled="state.funModule[currModuleIndex].loading == true">
+                  :disabled="uiLocked">
                   <el-radio v-for="env in envOptions" :key="env.value" border :value="env.value">{{ env.label }}</el-radio>
                 </el-radio-group>
               </div>
@@ -107,13 +106,13 @@
                         <th>生成发布日志</th>
                         <td>
                           <el-switch v-model="generatePublishLog.isEnable" :active-value="true" :inactive-value="false"
-                            :disabled="state.funModule[currModuleIndex].loading == true" inline-prompt active-text="开启"
+                            :disabled="uiLocked" inline-prompt active-text="开启"
                             inactive-text="关闭" size="default" />
                         </td>
                         <th v-show="generatePublishLog.isEnable">生成方式</th>
                         <td v-show="generatePublishLog.isEnable">
                           <el-select v-model="generatePublishLog.type"
-                            :disabled="state.funModule[currModuleIndex].loading == true" placeholder="请选择生成方式"
+                            :disabled="uiLocked" placeholder="请选择生成方式"
                             size="default" style="min-width: 50px">
                             <el-option label="默认" value="默认" />
                             <el-option label="仅发布内容" value="仅发布内容" />
@@ -129,13 +128,13 @@
                         <th>生成信息(包含)</th>
                         <td colspan="3">
                           <el-checkbox v-model="generatePublishLog.displayPublishField.isChangeSet"
-                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="变更集" />
+                            :disabled="uiLocked" size="default" label="变更集" />
                           <el-checkbox v-model="generatePublishLog.displayPublishField.isDateTime"
-                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="日期" />
+                            :disabled="uiLocked" size="default" label="日期" />
                           <el-checkbox v-model="generatePublishLog.displayPublishField.isUser"
-                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="用户" />
+                            :disabled="uiLocked" size="default" label="用户" />
                           <el-checkbox v-model="generatePublishLog.displayPublishField.isDll"
-                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="DLL" />
+                            :disabled="uiLocked" size="default" label="DLL" />
                         </td>
                       </tr>
                     </table>
@@ -158,7 +157,7 @@
                         <th>发布前备份</th>
                         <td>
                           <el-switch v-model="state.publishData.appconfigData.configItems.isBackup" :active-value="1"
-                            :inactive-value="0" :disabled="state.funModule[currModuleIndex].loading == true" inline-prompt
+                            :inactive-value="0" :disabled="uiLocked" inline-prompt
                             active-text="开启" inactive-text="关闭" size="default" />
                         </td>
                       </tr>
@@ -191,7 +190,7 @@
                         <template #reference>
                           <el-button v-if="section.status !== 'removed'" class="app-section-remove" type="danger" plain size="small"
                             title="将该模块移除(让其不参与编译/发布)"
-                            :disabled="state.funModule[currModuleIndex].loading == true"
+                            :disabled="uiLocked"
                             @click.stop>移除</el-button>
                         </template>
                       </el-popconfirm>
@@ -259,13 +258,13 @@
                 <el-col :span="12">日志信息</el-col>
                 <el-col :span="12">
                   <div class="item-btn-box">
-                    <el-button title="清空日志" size="small" text :icon="CircleClose" @click="onRemoveLogs"></el-button>
+                    <el-button title="清空日志" size="small" text :icon="CircleClose" :disabled="uiLocked" @click="onRemoveLogs"></el-button>
                   </div>
                 </el-col>
               </el-row>
             </div>
             <div class="log-toolbar" v-if="logPrintInfo.length > 0">
-              <el-button size="small" @click="copyLogs">复制日志</el-button>
+              <el-button size="small" :disabled="uiLocked" @click="copyLogs">复制日志</el-button>
             </div>
             <div ref="logContentRef" class="card-item-content log-content">
               <p v-for="log in logPrintInfo" :class="log.type">
@@ -571,6 +570,12 @@ const visibleFunModule = computed(() => {
     : withOrig.filter((f) => f.title !== "一键发布");
 });
 
+// UI 统一锁定（临时护栏，第三批调度中心上线后由架构根治取代）：
+// 任一功能模块 loading 中 或 定时发布执行中，所有会写入/重载 state.publishData 的入口统一禁用
+const uiLocked = computed(
+  () => isScheduledRunning.value || state.funModule.some((m) => m.loading)
+);
+
 // 功能模块触发
 const currModuleIndex = ref(0);
 // 阶段2：发布链路任务记录器（home 链路，手动/一键/定时手动发布共用）
@@ -590,6 +595,11 @@ const confirmProPublish = async (): Promise<boolean> => {
   }
 };
 const onFunModuleHandle = async (index: number) => {
+  // 定时发布执行中早退守卫（临时护栏）：避免功能卡并发改写运行中任务读取的页面状态
+  if (isScheduledRunning.value) {
+    ElMessage.warning("⏱ 定时发布执行中，请稍候");
+    return;
+  }
   // index 是 visibleFunModule 的渲染下标，反查原始下标，避免过滤后漂移
   const origIndex = state.funModule.findIndex(
     (f) => f.title === visibleFunModule.value[index].title
@@ -3945,10 +3955,13 @@ onUnmounted(() => {
 
 onActivated(async () => {
   console.log('=== onActivated 被调用 ===');
-  // 每次进入页面都重新查询默认项目并恢复环境
-  await getProjectDefault();
+  // 定时发布执行期间跳过默认项目重载（临时护栏）：防止重载换掉运行中任务读取的 publishData
+  if (!isScheduledRunning.value) {
+    // 每次进入页面都重新查询默认项目并恢复环境
+    await getProjectDefault();
+  }
 
-  if (state.funModule[currModuleIndex.value].loading == true) {
+  if (uiLocked.value) {
     console.log("当前模块正在加载中…");
     return;
   }
@@ -3999,6 +4012,12 @@ $homeNavLengh: 8;
         .item-btn-box {
           width: 100%;
           text-align: right;
+        }
+
+        // 定时发布执行中顶部提示（临时护栏）
+        .scheduled-running-banner {
+          margin-left: 8px;
+          vertical-align: middle;
         }
       }
 
