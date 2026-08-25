@@ -83,491 +83,162 @@
                   <el-radio border :value="4">Other</el-radio>
                 </el-radio-group>
               </div>
-              <div class="card-item-appconfig">
-                <table class="table-appconfig" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <th>程序集输出路径</th>
-                    <td>
-                      <a class="t-link-path" href="javascript:void(0);" title="打开程序集输出路径"
-                        @click="onOpenAssemblyOutPath(state.publishData.assemblyOutPath)"
-                        v-if="state.publishData.assemblyOutPath">{{ state.publishData.assemblyOutPath }}</a>
-                      <label v-else>未配置，将采用默认路径</label>
-                    </td>
-                  </tr>
-                </table>
-              </div>
-              <div class="card-item-appconfig" v-if="state.publishData.appconfigData.dllMode">
-                <table class="table-appconfig" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <th>获取dll方式</th>
-                    <td colspan="3">{{ showDllMode() }}</td>
-                  </tr>
-                  <tr
-                    v-show="state.publishData.appconfigData.dllMode == 'TFS' || state.publishData.appconfigData.dllMode == 'Git'">
-                    <th>生成发布日志</th>
-                    <td>
-                      <el-switch v-model="generatePublishLog.isEnable" :active-value="true" :inactive-value="false"
-                        :disabled="state.funModule[currModuleIndex].loading == true" inline-prompt active-text="开启"
-                        inactive-text="关闭" size="default" />
-                    </td>
-                    <th v-show="generatePublishLog.isEnable">生成方式</th>
-                    <td v-show="generatePublishLog.isEnable">
-                      <el-select v-model="generatePublishLog.type"
-                        :disabled="state.funModule[currModuleIndex].loading == true" placeholder="请选择生成方式"
-                        size="default" style="min-width: 50px">
-                        <el-option label="默认" value="默认" />
-                        <el-option label="仅发布内容" value="仅发布内容" />
-                        <el-option label="按日期" value="按日期" />
-                        <el-option label="按用户" value="按用户" />
-                      </el-select>
-                    </td>
-                  </tr>
-                  <tr v-show="(state.publishData.appconfigData.dllMode == 'TFS' || state.publishData.appconfigData.dllMode == 'Git') &&
-                    generatePublishLog.type !== '仅发布内容' &&
-                    generatePublishLog.isEnable
-                    ">
-                    <th>生成信息(包含)</th>
-                    <td colspan="3">
-                      <el-checkbox v-model="generatePublishLog.displayPublishField.isChangeSet"
-                        :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="变更集" />
-                      <el-checkbox v-model="generatePublishLog.displayPublishField.isDateTime"
-                        :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="日期" />
-                      <el-checkbox v-model="generatePublishLog.displayPublishField.isUser"
-                        :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="用户" />
-                      <el-checkbox v-model="generatePublishLog.displayPublishField.isDll"
-                        :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="DLL" />
-                    </td>
-                  </tr>
-                </table>
-              </div>
-              <div class="card-item-appconfig" v-if="state.publishData.appconfigData.msBuildPath">
-                <table class="table-appconfig" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <th>MsBuild路径</th>
-                    <td colspan="3">{{ state.publishData.appconfigData.msBuildPath }}</td>
-                  </tr>
-                  <tr>
-                    <th>强制重新生成</th>
-                    <td>
-                      {{
-                        state.publishData.appconfigData.configItems.isRebuild == 1
-                          ? "是"
-                          : "否"
-                      }}
-                    </td>
-                    <th>发布前备份</th>
-                    <td>
-                      <el-switch v-model="state.publishData.appconfigData.configItems.isBackup" :active-value="1"
-                        :inactive-value="0" :disabled="state.funModule[currModuleIndex].loading == true" inline-prompt
-                        active-text="开启" inactive-text="关闭" size="default" />
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>异步上传</th>
-                    <td>
-                      <el-switch
-                        v-model="isAsyncMode"
-                        :active-value="true"
-                        :inactive-value="false"
+
+              <el-collapse v-model="activeBaseConfig" class="base-config-collapse">
+                <el-collapse-item name="base" title="基础配置（dll方式 · MsBuild · 备份）">
+                  <div class="card-item-appconfig">
+                    <table class="table-appconfig" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <th>程序集输出路径</th>
+                        <td>
+                          <a class="t-link-path" href="javascript:void(0);" title="打开程序集输出路径"
+                            @click="onOpenAssemblyOutPath(state.publishData.assemblyOutPath)"
+                            v-if="state.publishData.assemblyOutPath">{{ state.publishData.assemblyOutPath }}</a>
+                          <label v-else>未配置，将采用默认路径</label>
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+                  <div class="card-item-appconfig" v-if="state.publishData.appconfigData.dllMode">
+                    <table class="table-appconfig" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <th>获取dll方式</th>
+                        <td colspan="3">{{ showDllMode() }}</td>
+                      </tr>
+                      <tr
+                        v-show="state.publishData.appconfigData.dllMode == 'TFS' || state.publishData.appconfigData.dllMode == 'Git'">
+                        <th>生成发布日志</th>
+                        <td>
+                          <el-switch v-model="generatePublishLog.isEnable" :active-value="true" :inactive-value="false"
+                            :disabled="state.funModule[currModuleIndex].loading == true" inline-prompt active-text="开启"
+                            inactive-text="关闭" size="default" />
+                        </td>
+                        <th v-show="generatePublishLog.isEnable">生成方式</th>
+                        <td v-show="generatePublishLog.isEnable">
+                          <el-select v-model="generatePublishLog.type"
+                            :disabled="state.funModule[currModuleIndex].loading == true" placeholder="请选择生成方式"
+                            size="default" style="min-width: 50px">
+                            <el-option label="默认" value="默认" />
+                            <el-option label="仅发布内容" value="仅发布内容" />
+                            <el-option label="按日期" value="按日期" />
+                            <el-option label="按用户" value="按用户" />
+                          </el-select>
+                        </td>
+                      </tr>
+                      <tr v-show="(state.publishData.appconfigData.dllMode == 'TFS' || state.publishData.appconfigData.dllMode == 'Git') &&
+                        generatePublishLog.type !== '仅发布内容' &&
+                        generatePublishLog.isEnable
+                        ">
+                        <th>生成信息(包含)</th>
+                        <td colspan="3">
+                          <el-checkbox v-model="generatePublishLog.displayPublishField.isChangeSet"
+                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="变更集" />
+                          <el-checkbox v-model="generatePublishLog.displayPublishField.isDateTime"
+                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="日期" />
+                          <el-checkbox v-model="generatePublishLog.displayPublishField.isUser"
+                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="用户" />
+                          <el-checkbox v-model="generatePublishLog.displayPublishField.isDll"
+                            :disabled="state.funModule[currModuleIndex].loading == true" size="default" label="DLL" />
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+                  <div class="card-item-appconfig" v-if="state.publishData.appconfigData.msBuildPath">
+                    <table class="table-appconfig" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <th>MsBuild路径</th>
+                        <td colspan="3">{{ state.publishData.appconfigData.msBuildPath }}</td>
+                      </tr>
+                      <tr>
+                        <th>强制重新生成</th>
+                        <td>
+                          {{
+                            state.publishData.appconfigData.configItems.isRebuild == 1
+                              ? "是"
+                              : "否"
+                          }}
+                        </td>
+                        <th>发布前备份</th>
+                        <td>
+                          <el-switch v-model="state.publishData.appconfigData.configItems.isBackup" :active-value="1"
+                            :inactive-value="0" :disabled="state.funModule[currModuleIndex].loading == true" inline-prompt
+                            active-text="开启" inactive-text="关闭" size="default" />
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>备份路径</th>
+                        <td>
+                          <el-input
+                            v-model="state.publishData.appconfigData.configItems.backupBasePath"
+                            placeholder="选填，如 /home/backups/smom"
+                            :disabled="true"
+                            size="default"
+                          />
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+
+              <el-collapse v-model="activeSections" class="app-sections-collapse">
+                <el-collapse-item v-for="section in appSections" :key="section.key" :name="section.key"
+                  :disabled="section.status === 'removed'">
+                  <template #title>
+                    <div class="app-section-title">
+                      <el-tag :type="section.tagType" size="small" effect="dark">{{ section.name }}</el-tag>
+                      <span class="app-section-summary">{{ section.summary }}</span>
+                      <el-tag :type="sectionBadgeType(section.status)" size="small">{{ sectionBadgeText(section) }}</el-tag>
+                      <el-button v-if="section.status !== 'removed'" class="app-section-remove" type="danger" plain size="small"
+                        title="将该模块移除(让其不参与编译/发布)"
                         :disabled="state.funModule[currModuleIndex].loading == true"
-                        inline-prompt
-                        active-text="开启"
-                        inactive-text="关闭"
-                        size="default"
-                      />
-                      <el-tooltip
-                        content="异步模式下仅 WebApiHost / ScheduleServer / WpfClient / SpcMonitor 并行执行，WebClient 仍需等待所有 WebApiHost 完成后才执行。"
-                        placement="top"
-                        effect="light"
-                      >
-                        <el-icon
-                          style="
-                            margin-left: 10px;
-                            position: relative;
-                            top: 4px;
-                            cursor: help;
-                            color: #909399;
-                          "
-                        >
-                          <QuestionFilled />
-                        </el-icon>
-                      </el-tooltip>
-                    </td>
-                    <th>备份路径</th>
-                    <td>
-                      <el-input
-                        v-model="state.publishData.appconfigData.configItems.backupBasePath"
-                        placeholder="选填，如 /home/backups/smom"
-                        :disabled="true"
-                        size="default"
-                      />
-                    </td>
-                  </tr>
-                </table>
-              </div>
-              <div class="card-item-appconfig">
-                <table class="table-appconfig mb15" cellpadding="0" cellspacing="0" v-if="
-                  state.publishData.appconfigData.configItems?.webApiHost?.clientPath
-                ">
-                  <tr>
-                    <th>应用类型</th>
-                    <td>{{ webApiHostName }}</td>
-                  </tr>
-                  <tr>
-                    <th>客户端生成路径</th>
-                    <td>
-                      <a
-                        class="t-link-path"
-                        href="javascript:void(0);"
-                        title="打开客户端生成路径"
-                        @click="
-                          onOpenClientPath(
-                            state.publishData.appconfigData.configItems.webApiHost
-                              .clientPath
-                          )
-                        "
-                        v-if="
-                          state.publishData.appconfigData.configItems.webApiHost
-                            .clientPath
-                        "
-                        >{{
-                          state.publishData.appconfigData.configItems.webApiHost
-                            .clientPath
-                        }}</a
-                      >
-                      <label v-else></label>
-                    </td>
-                  </tr>
-                  <template v-for="(apiServer, asIndex) in state.publishData.appconfigData
-                    .configItems.webApiHost.serverArr" :key="asIndex">
-                    <tr>
-                      <th colspan="2" class="t-align-c">{{ apiServer.name }}</th>
-                    </tr>
-                    <tr>
-                      <td colspan="2" class="t-align-c">
-                        <template v-for="serverPath in apiServer.serverPathArr">
-                          <table class="table-appconfig table-appconfig-shadow-none mt10 mb10 t-border-none"
-                            cellpadding="0" cellspacing="0" v-for="(serverVal, valIndex) in serverPath.value"
-                            :key="valIndex">
-                            <tr>
-                              <th>服务标识</th>
-                              <td>{{ serverVal.identity }}</td>
-                            </tr>
-                            <tr>
-                              <th>发布路径</th>
-                              <td>{{ serverVal.path }}</td>
-                            </tr>
-                          </table>
-                        </template>
-                      </td>
-                    </tr>
+                        @click.stop="onRemoveSection(section.key)">移除</el-button>
+                    </div>
                   </template>
-                  <tr>
-                    <td colspan="2" align="center" class="pt5 pb5 t-align-c">
-                      <el-button type="danger" plain size="small" title="将该模块移除(让其不参与编译/发布)"
-                        :disabled="state.funModule[currModuleIndex].loading == true" @click="
-                          state.publishData.appconfigData.configItems.webApiHost.clientPath =
-                          ''
-                          ">移除</el-button>
-                    </td>
-                  </tr>
-                </table>
-                <table class="table-appconfig mb15" cellpadding="0" cellspacing="0" v-if="
-                  state.publishData.appconfigData.configItems?.webClient?.clientPath
-                ">
-                  <tr>
-                    <th>应用类型</th>
-                    <td>{{ webClientName }}</td>
-                  </tr>
-                  <tr>
-                    <th>客户端生成路径</th>
-                    <td>
-                      <a
-                        class="t-link-path"
-                        href="javascript:void(0);"
-                        title="打开客户端生成路径"
-                        @click="
-                          onOpenClientPath(
-                            state.publishData.appconfigData.configItems.webClient.clientPath
-                          )
-                        "
-                        v-if="
-                          state.publishData.appconfigData.configItems.webClient.clientPath
-                        "
-                        >{{
-                          state.publishData.appconfigData.configItems.webClient.clientPath
-                        }}</a
-                      >
-                      <label v-else></label>
-                    </td>
-                  </tr>
-                  <template v-for="(webServer, wsIndex) in state.publishData.appconfigData
-                    .configItems.webClient.serverArr" :key="wsIndex">
-                    <tr>
-                      <th colspan="2" class="t-align-c">{{ webServer.name }}</th>
-                    </tr>
-                    <tr>
-                      <td colspan="2" class="t-align-c">
-                        <template v-for="serverPath in webServer.serverPathArr">
-                          <table class="table-appconfig table-appconfig-shadow-none mb10 mt10 t-border-none"
-                            cellpadding="0" cellspacing="0" v-for="(serverVal, valIndex) in serverPath.value"
-                            :key="valIndex">
-                            <tr>
-                              <th>服务标识</th>
-                              <td>{{ serverVal.identity }}</td>
-                            </tr>
-                            <tr>
-                              <th>发布路径</th>
-                              <td>{{ serverVal.path }}</td>
-                            </tr>
-                          </table>
-                        </template>
-                      </td>
-                    </tr>
-                  </template>
-                  <tr>
-                    <td colspan="2" align="center" class="pt5 pb5 t-align-c">
-                      <el-button type="danger" plain size="small" title="将该模块移除(让其不参与编译/发布)"
-                        :disabled="state.funModule[currModuleIndex].loading == true" @click="
-                          state.publishData.appconfigData.configItems.webClient.clientPath =
-                          ''
-                          ">移除</el-button>
-                    </td>
-                  </tr>
-                </table>
-                <table class="table-appconfig mb15" cellpadding="0" cellspacing="0" v-if="
-                  state.publishData.appconfigData.configItems?.scheduleServer
-                    ?.clientPath
-                ">
-                  <tr>
-                    <th>应用类型</th>
-                    <td>{{ scheduleServerName }}</td>
-                  </tr>
-                  <tr>
-                    <th>客户端生成路径</th>
-                    <td>
-                      <a
-                        class="t-link-path"
-                        href="javascript:void(0);"
-                        title="打开客户端生成路径"
-                        @click="
-                          onOpenClientPath(
-                            state.publishData.appconfigData.configItems.scheduleServer
-                              .clientPath
-                          )
-                        "
-                        v-if="
-                          state.publishData.appconfigData.configItems.scheduleServer
-                            .clientPath
-                        "
-                        >{{
-                          state.publishData.appconfigData.configItems.scheduleServer
-                            .clientPath
-                        }}</a
-                      >
-                      <label v-else></label>
-                    </td>
-                  </tr>
-                  <template v-for="(scheduleServer, asIndex) in state.publishData.appconfigData
-                    .configItems.scheduleServer.serverArr" :key="asIndex">
-                    <tr>
-                      <th colspan="2" class="t-align-c">{{ scheduleServer.name }}</th>
-                    </tr>
-                    <tr>
-                      <td colspan="2" class="t-align-c">
-                        <template v-for="serverPath in scheduleServer.serverPathArr">
-                          <table class="table-appconfig table-appconfig-shadow-none mt10 mb10 t-border-none"
-                            cellpadding="0" cellspacing="0" v-for="(serverVal, valIndex) in serverPath.value"
-                            :key="valIndex">
-                            <tr>
-                              <th>服务标识</th>
-                              <td>{{ serverVal.identity }}</td>
-                            </tr>
-                            <tr>
-                              <th>发布路径</th>
-                              <td>{{ serverVal.path }}</td>
-                            </tr>
-                          </table>
-                        </template>
-                      </td>
-                    </tr>
-                  </template>
-                  <tr>
-                    <td colspan="2" align="center" class="pt5 pb5 t-align-c">
-                      <el-button type="danger" plain size="small" title="将该模块移除(让其不参与编译/发布)"
-                        :disabled="state.funModule[currModuleIndex].loading == true" @click="
-                          state.publishData.appconfigData.configItems.scheduleServer.clientPath =
-                          ''
-                          ">移除</el-button>
-                    </td>
-                  </tr>
-                </table>
-                <table class="table-appconfig mb15" cellpadding="0" cellspacing="0" v-if="
-                  state.publishData.appconfigData.configItems?.wpfClient?.clientPath
-                ">
-                  <tr>
-                    <th>应用类型</th>
-                    <td>{{ wpfClientName }}</td>
-                  </tr>
-                  <tr>
-                    <th>客户端生成路径</th>
-                    <td>
-                      <a
-                        class="t-link-path"
-                        href="javascript:void(0);"
-                        title="打开客户端生成路径"
-                        @click="
-                          onOpenClientPath(
-                            state.publishData.appconfigData.configItems.wpfClient
-                              .clientPath
-                          )
-                        "
-                        v-if="
-                          state.publishData.appconfigData.configItems.wpfClient
-                            .clientPath
-                        "
-                        >{{
-                          state.publishData.appconfigData.configItems.wpfClient
-                            .clientPath
-                        }}</a
-                      >
-                      <label v-else></label>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>生成的目录</th>
-                    <td>
-                      {{
-                        showGenerateDir(
-                          String(
-                            state.publishData.appconfigData.configItems.wpfClient
-                              .generateDirJson
-                          )
-                        )
-                      }}
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>是否打包(压缩)</th>
-                    <td>
-                      {{
-                        state.publishData.appconfigData.configItems.wpfClient
-                          .isCompress == 1
-                          ? "是"
-                          : "否"
-                      }}
-                    </td>
-                  </tr>
-                  <tr v-if="
-                    state.publishData.appconfigData.configItems.wpfClient.isCompress ==
-                    1
-                  ">
-                    <th>打包(压缩)文件</th>
-                    <td>
-                      {{
-                        showCompressFile(
-                          String(
-                            state.publishData.appconfigData.configItems.wpfClient
-                              .compressFileJson
-                          )
-                        )
-                      }}
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>应用服务器</th>
-                    <td>
-                      {{
-                        state.publishData.appconfigData.configItems.wpfClient.serverName
-                      }}
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>服务端发布路径</th>
-                    <td>
-                      {{
-                        state.publishData.appconfigData.configItems.wpfClient.serverPath
-                      }}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td colspan="2" align="center" class="pt5 pb5 t-align-c">
-                      <el-button type="danger" plain size="small" title="将该模块移除(让其不参与编译/发布)"
-                        :disabled="state.funModule[currModuleIndex].loading == true" @click="
-                          state.publishData.appconfigData.configItems.wpfClient.clientPath =
-                          ''
-                          ">移除</el-button>
-                    </td>
-                  </tr>
-                </table>
-                <table class="table-appconfig" cellpadding="0" cellspacing="0" v-if="
-                  state.publishData.appconfigData.configItems?.spcMonitor?.clientPath
-                ">
-                  <tr>
-                    <th>应用类型</th>
-                    <td>{{ spcMonitorName }}</td>
-                  </tr>
-                  <tr>
-                    <th>客户端生成路径</th>
-                    <td>
-                      <a
-                        class="t-link-path"
-                        href="javascript:void(0);"
-                        title="打开客户端生成路径"
-                        @click="
-                          onOpenClientPath(
-                            state.publishData.appconfigData.configItems.spcMonitor
-                              .clientPath
-                          )
-                        "
-                        v-if="
-                          state.publishData.appconfigData.configItems.spcMonitor
-                            .clientPath
-                        "
-                        >{{
-                          state.publishData.appconfigData.configItems.spcMonitor
-                            .clientPath
-                        }}</a
-                      >
-                      <label v-else></label>
-                    </td>
-                  </tr>
-                  <template v-for="(spcServer, ssIndex) in state.publishData.appconfigData
-                    .configItems.spcMonitor.serverArr" :key="ssIndex">
-                    <tr>
-                      <th colspan="2" class="t-align-c">{{ spcServer.name }}</th>
-                    </tr>
-                    <tr>
-                      <td colspan="2" class="t-align-c">
-                        <template v-for="serverPath in spcServer.serverPathArr">
-                          <table class="table-appconfig table-appconfig-shadow-none mb10 mt10 t-border-none"
-                            cellpadding="0" cellspacing="0" v-for="(serverVal, valIndex) in serverPath.value"
-                            :key="valIndex">
-                            <tr>
-                              <th>服务标识</th>
-                              <td>{{ serverVal.identity }}</td>
-                            </tr>
-                            <tr>
-                              <th>发布路径</th>
-                              <td>{{ serverVal.path }}</td>
-                            </tr>
-                          </table>
-                        </template>
-                      </td>
-                    </tr>
-                  </template>
-                  <tr>
-                    <td colspan="2" align="center" class="pt5 pb5 t-align-c">
-                      <el-button type="danger" plain size="small" title="将该模块移除(让其不参与编译/发布)"
-                        :disabled="state.funModule[currModuleIndex].loading == true" @click="
-                          state.publishData.appconfigData.configItems.spcMonitor.clientPath =
-                          ''
-                          ">移除</el-button>
-                    </td>
-                  </tr>
-                </table>
-                <el-empty description="无应用配置信息." v-show="showEmptyAppConfig" :image-size="150" />
-              </div>
+                  <div class="app-section-body">
+                    <div class="app-section-row">
+                      <span class="app-section-label">客户端生成路径</span>
+                      <a class="t-link-path" href="javascript:void(0);" title="打开客户端生成路径"
+                        @click="onOpenClientPath(section.clientPath)">{{ section.clientPath }}</a>
+                    </div>
+                    <template v-if="section.kind === 'wpf' && section.wpf">
+                      <div class="app-section-row">
+                        <span class="app-section-label">生成的目录</span>
+                        <span>{{ section.wpf.generateDirs.join("、") || "-" }}</span>
+                      </div>
+                      <div class="app-section-row">
+                        <span class="app-section-label">是否打包(压缩)</span>
+                        <span>{{ section.wpf.isCompress ? "是" : "否" }}</span>
+                      </div>
+                      <div class="app-section-row" v-if="section.wpf.isCompress">
+                        <span class="app-section-label">打包(压缩)文件</span>
+                        <span>{{ section.wpf.compressFiles.join("、") || "-" }}</span>
+                      </div>
+                      <div class="app-section-row">
+                        <span class="app-section-label">应用服务器</span>
+                        <span>{{ section.wpf.serverName || "-" }}</span>
+                      </div>
+                      <div class="app-section-row">
+                        <span class="app-section-label">服务端发布路径</span>
+                        <span>{{ section.wpf.serverPath || "-" }}</span>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div v-for="server in section.servers" :key="server.name" class="app-section-server">
+                        <div class="app-section-server-name">🖥 {{ server.name }}</div>
+                        <div v-for="p in server.paths" :key="p.identity + p.path" class="app-section-path">
+                          <el-tag size="small" type="info" effect="plain" class="app-section-identity">{{ p.identity || "-" }}</el-tag>
+                          <el-tooltip :content="p.path" placement="top" :disabled="!p.path">
+                            <span class="app-section-path-text">{{ p.path || "-" }}</span>
+                          </el-tooltip>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+
+              <el-empty description="无应用配置信息." v-show="showEmptyAppConfig" :image-size="150" />
             </div>
           </div>
         </div>
@@ -661,9 +332,11 @@ import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { createDeployRecorder } from "@/utils/deployTaskRecorder";
 import { classifyWpfDlls } from "@/utils/wpfDllClassify";
 import {
-  APP_TYPE_ORDER,
+  buildAppSections,
   filterAppconfigForDialog,
   isTypeActive,
+  APP_TYPE_ORDER,
+  type AppSection as AppSectionLike,
   type AppTypeKey,
   type PublishStatusMap,
 } from "./publishSections";
@@ -715,6 +388,10 @@ const spcMonitorName = ref("SpcMonitor");
 const projectAssemblyOutPath = ref("");
 // 异步上传模式
 const isAsyncMode = ref(false);
+// Task 5 模板重写已移除"异步上传"开关与其 tooltip；isAsyncMode/QuestionFilled 由 Task 8 清理，
+// 此处显式标记避免 noUnusedLocals 报错（沿用 Task 3 对 onRemoveSection 的处理方式）
+void isAsyncMode;
+void QuestionFilled;
 // 应用类型发布状态徽标（失败续发语义：published 跳过；重置收口在 getPublishAppconfigs）
 const publishStatus = reactive<PublishStatusMap>({
   webApiHost: "pending",
@@ -751,8 +428,27 @@ const onRemoveSection = (key: AppTypeKey) => {
   (state.publishData.appconfigData.configItems as any)[key].clientPath = "";
   publishStatus[key] = "removed";
 };
-// Task 5 将 onRemoveSection 接入模板移除按钮；当前模板未引用，显式标记避免 noUnusedLocals 报错
-void onRemoveSection;
+// 折叠面板模型与展开状态（默认全部折叠）
+const activeSections = ref<string[]>([]);
+const activeBaseConfig = ref<string[]>([]);
+const appSections = computed(() => buildAppSections(state.publishData.appconfigData.configItems, publishStatus));
+
+const sectionBadgeType = (status: AppSectionLike["status"]): "success" | "danger" | "primary" | "info" =>
+  status === "published" ? "success" : status === "failed" ? "danger" : status === "publishing" ? "primary" : "info";
+const sectionBadgeText = (section: AppSectionLike): string => {
+  switch (section.status) {
+    case "published":
+      return `✓ 已发布 ${publishedAt[section.key]}`;
+    case "failed":
+      return "✗ 发布失败";
+    case "removed":
+      return "⊘ 已移除";
+    case "publishing":
+      return "● 发布中";
+    default:
+      return "● 待发布";
+  }
+};
 const logContentRef = ref();
 const logPrintInfo = ref<LogPrintType[]>([]);
 const generatePublishLog = ref({
@@ -3903,20 +3599,6 @@ const showDllMode = () => {
   return modelName;
 };
 
-// 显示生成目录
-const showGenerateDir = (jsonValue: string) => {
-  if (!jsonValue) return null;
-  let generateDirArr = JSON.parse(jsonValue);
-  return generateDirArr.join("、");
-};
-
-// 显示生成目录
-const showCompressFile = (jsonValue: string) => {
-  if (!jsonValue) return null;
-  let compressFileArr = JSON.parse(jsonValue);
-  return compressFileArr.join("、");
-};
-
 // 项目切换
 const onProjectChange = async (val: number) => {
   let projectObj = projectList.value?.find((item) => item.id === val);
@@ -4248,15 +3930,97 @@ $homeNavLengh: 8;
               }
             }
           }
+        }
 
-          .table-appconfig:hover {
-            // border: 1px #f56c6c solid;
-            box-shadow: 5px 5px 15px rgba(0, 0, 0, 0.2);
+        .base-config-collapse,
+        .app-sections-collapse {
+          border-top: none;
+        }
+
+        .app-sections-collapse {
+          :deep(.el-collapse-item__header) {
+            height: auto;
+            min-height: 48px;
+            padding: 6px 0;
+            line-height: normal;
           }
 
-          .table-appconfig-shadow-none {
-            box-shadow: none !important;
+          :deep(.el-collapse-item.is-disabled .el-collapse-item__header) {
+            color: var(--el-text-color-placeholder);
+            cursor: not-allowed;
           }
+        }
+
+        .app-section-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding-right: 10px;
+          min-width: 0;
+        }
+
+        .app-section-summary {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 13px;
+          color: var(--el-text-color-secondary);
+        }
+
+        .app-section-remove {
+          flex-shrink: 0;
+        }
+
+        .app-section-body {
+          padding: 2px 0 8px 4px;
+        }
+
+        .app-section-row {
+          display: flex;
+          gap: 8px;
+          padding: 4px 0;
+          font-size: 14px;
+          align-items: baseline;
+          min-width: 0;
+        }
+
+        .app-section-label {
+          flex: 0 0 110px;
+          text-align: right;
+          color: var(--el-text-color-secondary);
+        }
+
+        .app-section-server {
+          margin: 8px 0 4px;
+        }
+
+        .app-section-server-name {
+          font-weight: 600;
+          font-size: 13px;
+          color: var(--el-text-color-regular);
+          padding: 2px 0;
+        }
+
+        .app-section-path {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 2px 0 2px 16px;
+          min-width: 0;
+        }
+
+        .app-section-identity {
+          flex-shrink: 0;
+        }
+
+        .app-section-path-text {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
       }
 
