@@ -1,5 +1,5 @@
 <template>
-  <div class="publish-container layout-pd">
+  <div class="publish-container layout-padding">
     <el-row :gutter="15" class="publish-card-box mb15">
       <el-col v-for="(fun, index) in visibleFunModule" :key="fun.title" :class="{
         'publish-media publish-media-lg': fun.origIndex > 1,
