@@ -186,10 +186,15 @@
                       <el-tag :type="section.tagType" size="small" effect="dark">{{ section.name }}</el-tag>
                       <span class="app-section-summary">{{ section.summary }}</span>
                       <el-tag :type="sectionBadgeType(section.status)" size="small">{{ sectionBadgeText(section) }}</el-tag>
-                      <el-button v-if="section.status !== 'removed'" class="app-section-remove" type="danger" plain size="small"
-                        title="将该模块移除(让其不参与编译/发布)"
-                        :disabled="state.funModule[currModuleIndex].loading == true"
-                        @click.stop="onRemoveSection(section.key)">移除</el-button>
+                      <el-popconfirm title="移除后该模块本次不参与编译/发布，刷新可恢复。确认移除？" width="240"
+                        @confirm="onRemoveSection(section.key)">
+                        <template #reference>
+                          <el-button v-if="section.status !== 'removed'" class="app-section-remove" type="danger" plain size="small"
+                            title="将该模块移除(让其不参与编译/发布)"
+                            :disabled="state.funModule[currModuleIndex].loading == true"
+                            @click.stop>移除</el-button>
+                        </template>
+                      </el-popconfirm>
                     </div>
                   </template>
                   <div class="app-section-body">
@@ -297,7 +302,7 @@ import {
   defineAsyncComponent,
   nextTick,
 } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import _ from "lodash";
 import { Refresh, CircleClose, EditPen, QuestionFilled, VideoPause, VideoPlay, Close } from "@element-plus/icons-vue";
 import { useRouter } from "vue-router";
@@ -557,6 +562,20 @@ const visibleFunModule = computed(() => {
 const currModuleIndex = ref(0);
 // 阶段2：发布链路任务记录器（home 链路，手动/一键/定时手动发布共用）
 let deployRecorder: DeployRecorder | null = null;
+// 高危操作确认：仅 Pro（生产）环境的发布动作需要
+const confirmProPublish = async (): Promise<boolean> => {
+  if (state.publishData.environment !== 3) return true;
+  try {
+    await ElMessageBox.confirm(
+      `即将发布到生产环境【${state.publishData.projectName} / Pro】，确认执行？`,
+      "高危操作确认",
+      { type: "warning", confirmButtonText: "确认发布", cancelButtonText: "取消" }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+};
 const onFunModuleHandle = async (index: number) => {
   // index 是 visibleFunModule 的渲染下标，反查原始下标，避免过滤后漂移
   const origIndex = state.funModule.findIndex(
@@ -571,6 +590,7 @@ const onFunModuleHandle = async (index: number) => {
       ElMessage.warning("请先选择项目和发布配置！");
       return;
     }
+    if (!(await confirmProPublish())) return;
     scheduledPublishDialogRef.value.openDialog({
       projectId: state.publishData.projectId,
       projectName: state.publishData.projectName,
@@ -590,6 +610,7 @@ const onFunModuleHandle = async (index: number) => {
     ElMessage.info(`正在[${currModule.title}]中，请稍等！`);
     return;
   }
+  if ((title === "一键发布" || title === "手动发布") && !(await confirmProPublish())) return;
   onRemoveLogs();
   // 重置停止/暂停信号
   state.publishData.publishStopped = false;
