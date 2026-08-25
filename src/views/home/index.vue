@@ -660,6 +660,12 @@ import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { createDeployRecorder } from "@/utils/deployTaskRecorder";
 import { classifyWpfDlls } from "@/utils/wpfDllClassify";
+import {
+  APP_TYPE_ORDER,
+  isTypeActive,
+  type AppTypeKey,
+  type PublishStatusMap,
+} from "./publishSections";
 import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
@@ -708,6 +714,44 @@ const spcMonitorName = ref("SpcMonitor");
 const projectAssemblyOutPath = ref("");
 // 异步上传模式
 const isAsyncMode = ref(false);
+// 应用类型发布状态徽标（失败续发语义：published 跳过；重置收口在 getPublishAppconfigs）
+const publishStatus = reactive<PublishStatusMap>({
+  webApiHost: "pending",
+  webClient: "pending",
+  scheduleServer: "pending",
+  wpfClient: "pending",
+  spcMonitor: "pending",
+});
+const publishedAt = reactive<Record<AppTypeKey, string>>({
+  webApiHost: "",
+  webClient: "",
+  scheduleServer: "",
+  wpfClient: "",
+  spcMonitor: "",
+});
+const resetPublishStatus = () => {
+  for (const { key } of APP_TYPE_ORDER) {
+    publishStatus[key] = "pending";
+    publishedAt[key] = "";
+  }
+};
+const markPublishing = (key: AppTypeKey) => {
+  if (publishStatus[key] !== "published") publishStatus[key] = "publishing";
+};
+const markPublished = (key: AppTypeKey) => {
+  publishStatus[key] = "published";
+  publishedAt[key] = formatDate(new Date(), "HH:MM");
+};
+const markFailed = (key: AppTypeKey) => {
+  if (publishStatus[key] !== "published") publishStatus[key] = "failed";
+};
+// 移除模块：置空 clientPath（原模板 5 处内联赋值）+ 标记 removed 供面板禁用态展示
+const onRemoveSection = (key: AppTypeKey) => {
+  (state.publishData.appconfigData.configItems as any)[key].clientPath = "";
+  publishStatus[key] = "removed";
+};
+// Task 5 将 onRemoveSection 接入模板移除按钮；当前模板未引用，显式标记避免 noUnusedLocals 报错
+void onRemoveSection;
 const logContentRef = ref();
 const logPrintInfo = ref<LogPrintType[]>([]);
 const generatePublishLog = ref({
@@ -903,31 +947,14 @@ const validateTfsLocalPath = async () => {
   return false;
 };
 
-// 获取项目配置信息
+// 获取项目配置信息（顺序 = APP_TYPE_ORDER，与原实现一致，影响编译顺序）
 const getConfigItemHosts = () => {
-  let projectHosts = [
-    {
-      hostItem: state.publishData.appconfigData.configItems.webApiHost,
-      csprojFile: "SIE.WebApiHost.csproj",
-    },
-    {
-      hostItem: state.publishData.appconfigData.configItems.scheduleServer,
-      csprojFile: "SIE.ScheduleServer.csproj",
-    },
-    {
-      hostItem: state.publishData.appconfigData.configItems.webClient,
-      csprojFile: "WebClient.csproj",
-    },
-    {
-      hostItem: state.publishData.appconfigData.configItems.spcMonitor,
-      csprojFile: "SIE.SpcMonitor.csproj",
-    },
-    {
-      hostItem: state.publishData.appconfigData.configItems.wpfClient,
-      csprojFile: "WpfClient.csproj",
-    },
-  ];
-  return projectHosts.filter((item) => item.hostItem.clientPath);
+  return APP_TYPE_ORDER.filter(({ key }) =>
+    isTypeActive((state.publishData.appconfigData.configItems as any)[key]?.clientPath, publishStatus[key])
+  ).map(({ key, csprojFile }) => ({
+    hostItem: (state.publishData.appconfigData.configItems as any)[key],
+    csprojFile,
+  }));
 };
 
 // 一键/手动发布检查点
@@ -1001,9 +1028,9 @@ const onExecDone = () => {
 // 项目发布
 const projectPublish = async () => {
   if (!state.publishData.appconfigData.id) return false;
-  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
-    (s) => (state.publishData.appconfigData.configItems as any)[s]?.clientPath
-  );
+  const serviceNames = APP_TYPE_ORDER.filter(({ key }) =>
+    isTypeActive((state.publishData.appconfigData.configItems as any)[key]?.clientPath, publishStatus[key])
+  ).map(({ pascal }) => pascal);
   deployRecorder = await createDeployRecorder({
     source: "home",
     triggerType: isScheduledRunning.value ? "scheduled" : "manual",
@@ -1025,24 +1052,29 @@ const projectPublish = async () => {
 
     await checkCanContinueHome();
     // 发布 WebApiHost
+    markPublishing("webApiHost");
     const publishWebApiResult = await publishWebApiHost();
     if (!publishWebApiResult) {
+      markFailed("webApiHost");
       return false;
     }
-    state.publishData.appconfigData.configItems.webApiHost.clientPath = "";
+    markPublished("webApiHost");
 
     await checkCanContinueHome();
     // 发布 ScheduleServer
+    markPublishing("scheduleServer");
     const publishScheduleResult = await publishScheduleServer();
     if (!publishScheduleResult) {
+      markFailed("scheduleServer");
       return false;
     }
-    state.publishData.appconfigData.configItems.scheduleServer.clientPath = "";
+    markPublished("scheduleServer");
 
     await checkCanContinueHome();
     // 发布 WpfClient
+    markPublishing("wpfClient");
     const wpfClientItem = state.publishData.appconfigData.configItems.wpfClient;
-    const wpfDetailId = wpfClientItem.clientPath
+    const wpfDetailId = isTypeActive(wpfClientItem.clientPath, publishStatus.wpfClient)
       ? ((await deployRecorder?.step("WpfClient", "upload", {
           serverId: wpfClientItem.serverId ?? undefined,
           serverName: wpfClientItem.serverName ?? undefined,
@@ -1057,25 +1089,30 @@ const projectPublish = async () => {
     }
     await deployRecorder?.done(wpfDetailId, publishWpfClientResult ? "success" : "failed");
     if (!publishWpfClientResult) {
+      markFailed("wpfClient");
       return false;
     }
-    state.publishData.appconfigData.configItems.wpfClient.clientPath = "";
+    markPublished("wpfClient");
 
     await checkCanContinueHome();
     // 发布 SpcMonitor
+    markPublishing("spcMonitor");
     const publishSpcMonitorResult = await publishSpcMonitor();
     if (!publishSpcMonitorResult) {
+      markFailed("spcMonitor");
       return false;
     }
-    state.publishData.appconfigData.configItems.spcMonitor.clientPath = "";
+    markPublished("spcMonitor");
 
     await checkCanContinueHome();
     // 发布 WebClient
+    markPublishing("webClient");
     const publishWebClientResult = await publishWebClient();
     if (!publishWebClientResult) {
+      markFailed("webClient");
       return false;
     }
-    state.publishData.appconfigData.configItems.webClient.clientPath = "";
+    markPublished("webClient");
     try {
       sendNotification({
         title: "发布完成",
@@ -1239,7 +1276,7 @@ const publishBeforeBackup = async (id: number) => {
 // 发布[WebApiHost]服务
 const publishWebApiHost = async () => {
   const webApiHostItem = state.publishData.appconfigData.configItems.webApiHost;
-  if (!webApiHostItem.clientPath) return true;
+  if (!isTypeActive(webApiHostItem.clientPath, publishStatus.webApiHost)) return true;
 
   printInfoLog("");
   for (let i = 0; i < webApiHostItem.serverArr.length; i++) {
@@ -1272,7 +1309,7 @@ const publishWebApiHost = async () => {
 // 发布[SpcMonitor]服务
 const publishSpcMonitor = async () => {
   const spcMonitorItem = state.publishData.appconfigData.configItems.spcMonitor;
-  if (!spcMonitorItem.clientPath) return true;
+  if (!isTypeActive(spcMonitorItem.clientPath, publishStatus.spcMonitor)) return true;
 
   printInfoLog("");
   for (let i = 0; i < spcMonitorItem.serverArr.length; i++) {
@@ -1307,7 +1344,7 @@ const publishSpcMonitor = async () => {
 // 发布[WebClient]服务
 const publishWebClient = async () => {
   const webClientItem = state.publishData.appconfigData.configItems.webClient;
-  if (!webClientItem.clientPath) return true;
+  if (!isTypeActive(webClientItem.clientPath, publishStatus.webClient)) return true;
 
   printInfoLog("");
   for (let i = 0; i < webClientItem.serverArr.length; i++) {
@@ -1340,7 +1377,7 @@ const publishWebClient = async () => {
 // 发布[ScheduleServer]服务
 const publishScheduleServer = async () => {
   const scheduleServerItem = state.publishData.appconfigData.configItems.scheduleServer;
-  if (!scheduleServerItem.clientPath) return true;
+  if (!isTypeActive(scheduleServerItem.clientPath, publishStatus.scheduleServer)) return true;
 
   printInfoLog("");
 
@@ -1527,6 +1564,8 @@ const publishScheduleServer = async () => {
 const newPublishWpfClient = async () => {
   const wpfClientItem = state.publishData.appconfigData.configItems.wpfClient;
   if (!wpfClientItem.clientPath) return true;
+  // 失败续发：已发布的 WpfClient 跳过（拆行保持 clientPath 窄化为 string，与 isTypeActive 语义等价）
+  if (publishStatus.wpfClient === "published") return true;
 
   printInfoLog("");
   printInfoLog(
@@ -1750,6 +1789,8 @@ const newPublishWpfClient = async () => {
 const publishWpfClient = async () => {
   const wpfClientItem = state.publishData.appconfigData.configItems.wpfClient;
   if (!wpfClientItem.clientPath) return true;
+  // 失败续发：已发布的 WpfClient 跳过（拆行保持 clientPath 窄化为 string，与 isTypeActive 语义等价）
+  if (publishStatus.wpfClient === "published") return true;
 
   printInfoLog("");
   printInfoLog(
@@ -2433,7 +2474,7 @@ const getApplicationAssemblys = async (isOpenDir: boolean = false) => {
   let isSuccess = true;
   printInfoLog("");
   // 获取[WebApiHost]应用程序集
-  if (state.publishData.appconfigData.configItems.webApiHost.clientPath) {
+  if (isTypeActive(state.publishData.appconfigData.configItems.webApiHost.clientPath, publishStatus.webApiHost)) {
     const copyWebApiResult = await copyAssemblyFile(
       "WebApiHost",
       projectOutPath,
@@ -2443,7 +2484,7 @@ const getApplicationAssemblys = async (isOpenDir: boolean = false) => {
   }
 
   // 获取[ScheduleServer]应用程序集
-  if (state.publishData.appconfigData.configItems.scheduleServer.clientPath) {
+  if (isTypeActive(state.publishData.appconfigData.configItems.scheduleServer.clientPath, publishStatus.scheduleServer)) {
     const copyScheduleServerResult = await copyAssemblyFile(
       "ScheduleServer",
       projectOutPath,
@@ -2453,7 +2494,7 @@ const getApplicationAssemblys = async (isOpenDir: boolean = false) => {
   }
 
   // 获取[WebClient]应用程序集
-  if (state.publishData.appconfigData.configItems.webClient.clientPath) {
+  if (isTypeActive(state.publishData.appconfigData.configItems.webClient.clientPath, publishStatus.webClient)) {
     const copyWebClientResult = await copyAssemblyFile(
       "WebClient",
       projectOutPath,
@@ -2463,7 +2504,7 @@ const getApplicationAssemblys = async (isOpenDir: boolean = false) => {
   }
 
   // 获取[SpcMonitor]应用程序集
-  if (state.publishData.appconfigData.configItems.spcMonitor.clientPath) {
+  if (isTypeActive(state.publishData.appconfigData.configItems.spcMonitor.clientPath, publishStatus.spcMonitor)) {
     const copySpcMonitorResult = await copyAssemblyFile(
       "SpcMonitor",
       projectOutPath,
@@ -2473,7 +2514,7 @@ const getApplicationAssemblys = async (isOpenDir: boolean = false) => {
   }
 
   // 获取[WpfClient]应用程序集
-  if (state.publishData.appconfigData.configItems.wpfClient.clientPath) {
+  if (isTypeActive(state.publishData.appconfigData.configItems.wpfClient.clientPath, publishStatus.wpfClient)) {
     let copyWpfClientResult = false;
     if (state.publishData.appconfigData.configItems.isNewVersion) {
       // 新版
@@ -3794,6 +3835,8 @@ const getPublishAppconfigs = async () => {
       state.publishData.appconfigData
     );
   }
+  // 状态徽标重置唯一收口：所有配置重载路径（默认项目/刷新/切项目/切环境/对话框与向导 refresh）都经过这里
+  resetPublishStatus();
 };
 
 // 保存环境选择到本地存储
