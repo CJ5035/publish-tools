@@ -129,6 +129,7 @@ export default {
 		oneClickPublishTip: 'Show one-click publish button and its scheduled option when enabled',
 		winServiceRetry: 'Windows Service Start/Stop Retry',
 		winCopyRetry: 'Windows Copy Retry',
+		winUploadRetry: 'Upload Retry',
 		retryCount: 'Retry Count',
 		retryInterval: 'Retry Interval (sec)',
 		save: 'Save',
@@ -147,6 +148,10 @@ export default {
 		mcpStatusStopped: 'Stopped',
 		mcpStatusStarting: 'Starting',
 		mcpConfigSaved: 'MCP config saved. Restart the app to apply changes.',
+		msBuildPath: 'MsBuild Path',
+		msBuildPathPlaceholder: 'e.g. C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe',
+		msBuildPathTip: 'Global default MsBuild path, auto-filled when creating a project',
+		msBuildPathNotExistWarn: 'MsBuild path does not exist, please check',
 	},
 	about: {
 		title: 'About',

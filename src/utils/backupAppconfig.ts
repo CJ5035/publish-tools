@@ -7,6 +7,7 @@ import { displayOs, removeSlash } from "@/utils/other";
 import { useTfsDb } from "@/database/teamFoundationServer/index";
 import { useGitDb } from "@/database/git/index";
 import { getDllFilesByChangedItems, getTfsChangedPath } from "@/utils/outPublishInfo";
+import { classifyWpfDlls, type WpfDllClassifyResult } from "@/utils/wpfDllClassify";
 
 // 查询Tfs信息
 const getTfsDetail = async (id: number) => {
@@ -475,6 +476,26 @@ const getWpfClientConfigType = async (
 
   var backFiles = new Array();
   const generateDirs = JSON.parse(serverConfigItem.generateDirJson) as string[];
+  // --- 扁平兜底：探测 Domain/UI 存在性，任一缺失时计算顶层分选结果；10.2+ 新版本不兜底 ---
+  const clientRoot = removeSlash(serverConfigItem.clientPath);
+  const isNewVersion = Boolean(appconfigData.configItems?.isNewVersion);
+  let dirExists: { Domain: boolean; UI: boolean } = { Domain: true, UI: true };
+  let flatGroups: WpfDllClassifyResult | null = null;
+  try {
+    const domainRes = await cmdInvoke("exists", { path: `${clientRoot}/Domain` });
+    const uiRes = await cmdInvoke("exists", { path: `${clientRoot}/UI` });
+    dirExists.Domain = domainRes.code === 0 && (domainRes.data as boolean) === true;
+    dirExists.UI = uiRes.code === 0 && (uiRes.data as boolean) === true;
+    if (!isNewVersion && (!dirExists.Domain || !dirExists.UI)) {
+      const topDlls = await getReadAllDlls(clientRoot);
+      flatGroups = classifyWpfDlls(topDlls);
+    }
+  } catch (_) {
+    // 探测失败时保持默认：不触发兜底，按原逻辑走子目录读取（若目录不存在，后续 read 会返回空）
+  }
+  const isFlatFallback = (dir: string) =>
+    !isNewVersion && (dir === "Domain" || dir === "UI") && flatGroups !== null && !dirExists[dir as keyof typeof dirExists];
+
   for (let i = 0; i < generateDirs.length; i++) {
     const generateDir = generateDirs[i];
     const cPath =
@@ -491,7 +512,12 @@ const getWpfClientConfigType = async (
       var cBackFile = {} as any;
       cBackFile[generateDir] = [];
       if (dllFiles && dllFiles.length > 0) {
-        let allDllFiles = await getReadAllDlls(cPath);
+        let allDllFiles: string[];
+        if (isFlatFallback(generateDir) && flatGroups) {
+          allDllFiles = (flatGroups as any)[generateDir] as string[];
+        } else {
+          allDllFiles = await getReadAllDlls(cPath);
+        }
         for (let m = 0; m < allDllFiles.length; m++) {
           const dllFile = allDllFiles[m];
           const tfsDllFile = dllFiles.find((x) => x === dllFile);
@@ -513,7 +539,12 @@ const getWpfClientConfigType = async (
       var cBackFile = {} as any;
       cBackFile[generateDir] = [];
       if (dllFiles && dllFiles.length > 0) {
-        let allDllFiles = await getReadAllDlls(cPath);
+        let allDllFiles: string[];
+        if (isFlatFallback(generateDir) && flatGroups) {
+          allDllFiles = (flatGroups as any)[generateDir] as string[];
+        } else {
+          allDllFiles = await getReadAllDlls(cPath);
+        }
         for (let m = 0; m < allDllFiles.length; m++) {
           const dllFile = allDllFiles[m];
           const gitDllFile = dllFiles.find((x) => x === dllFile);
@@ -524,11 +555,31 @@ const getWpfClientConfigType = async (
       }
       backFiles.push(cBackFile);
     } else if (appconfigData.dllMode == "DLL名称") {
-      const dllNameBackFiles = await getDllNameBackFiles(cPath, appconfigData);
-      if (!dllNameBackFiles) return null;
-      var cBackFile = {} as any;
-      cBackFile[generateDir] = dllNameBackFiles;
-      backFiles.push(cBackFile);
+      if (isFlatFallback(generateDir) && flatGroups) {
+        const rawFiles = await getDllNameBackFiles(clientRoot, appconfigData);
+        if (!rawFiles) return null;
+        // 交集：pattern 匹配结果 ∩ 扁平分选到该桶的结果
+        const allowed = new Set(((flatGroups as any)[generateDir] as string[]).map((f) => f.toLowerCase()));
+        const filtered = rawFiles.filter((f: string) => {
+          const base = f.substring(f.lastIndexOf("/") + 1).split("\\").pop() || f;
+          return allowed.has(base.toLowerCase());
+        });
+        // 归一化为纯文件名（与原分支后续归一化逻辑一致）
+        const normalized = filtered.map((f: string) => {
+          const p = removeSlash(f);
+          const idx = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+          return idx >= 0 ? p.substring(idx + 1) : p;
+        });
+        var cBackFile = {} as any;
+        cBackFile[generateDir] = normalized;
+        backFiles.push(cBackFile);
+      } else {
+        const dllNameBackFiles = await getDllNameBackFiles(cPath, appconfigData);
+        if (!dllNameBackFiles) return null;
+        var cBackFile = {} as any;
+        cBackFile[generateDir] = dllNameBackFiles;
+        backFiles.push(cBackFile);
+      }
     } else {
       let dllModeDateRange = getDllModeDateRange(
         appconfigData.dllMode,
@@ -537,20 +588,48 @@ const getWpfClientConfigType = async (
       if (dllModeDateRange.length < 1) {
         var cBackFile = {} as any;
         cBackFile[generateDir] = [];
-        let allDllFiles = await getReadAllDlls(cPath);
-        cBackFile[generateDir].push(...allDllFiles);
+        if (isFlatFallback(generateDir) && flatGroups) {
+          cBackFile[generateDir].push(...((flatGroups as any)[generateDir] as string[]));
+        } else {
+          let allDllFiles = await getReadAllDlls(cPath);
+          cBackFile[generateDir].push(...allDllFiles);
+        }
         backFiles.push(cBackFile);
       } else {
-        const readDllDateResult = await cmdInvoke("read_dlls_in_date_range", {
-          dir: cPath,
-          startDate: dllModeDateRange[0],
-          endDate: dllModeDateRange[1],
-        });
-        if (readDllDateResult.code === 0 && readDllDateResult.data) {
-          var cBackFile = {} as any;
-          cBackFile[generateDir] = [];
-          cBackFile[generateDir].push(...readDllDateResult.data);
-          backFiles.push(cBackFile);
+        if (isFlatFallback(generateDir) && flatGroups) {
+          const readDllDateResult = await cmdInvoke("read_dlls_in_date_range", {
+            dir: clientRoot,
+            startDate: dllModeDateRange[0],
+            endDate: dllModeDateRange[1],
+          });
+          if (readDllDateResult.code === 0 && readDllDateResult.data) {
+            const allowed = new Set(((flatGroups as any)[generateDir] as string[]).map((f: string) => f.toLowerCase()));
+            var cBackFile = {} as any;
+            cBackFile[generateDir] = [];
+            for (const p of readDllDateResult.data as string[]) {
+              const base = (() => {
+                const pp = removeSlash(p);
+                const idx = Math.max(pp.lastIndexOf("/"), pp.lastIndexOf("\\"));
+                return (idx >= 0 ? pp.substring(idx + 1) : pp).toLowerCase();
+              })();
+              if (allowed.has(base)) {
+                cBackFile[generateDir].push(p);
+              }
+            }
+            backFiles.push(cBackFile);
+          }
+        } else {
+          const readDllDateResult = await cmdInvoke("read_dlls_in_date_range", {
+            dir: cPath,
+            startDate: dllModeDateRange[0],
+            endDate: dllModeDateRange[1],
+          });
+          if (readDllDateResult.code === 0 && readDllDateResult.data) {
+            var cBackFile = {} as any;
+            cBackFile[generateDir] = [];
+            cBackFile[generateDir].push(...readDllDateResult.data);
+            backFiles.push(cBackFile);
+          }
         }
       }
     }

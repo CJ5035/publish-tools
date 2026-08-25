@@ -152,7 +152,7 @@ impl McpHandler {
     async fn file_upload(&self, Parameters(params): Parameters<FileTransferParam>) -> Result<CallToolResult, ErrorData> {
         let result = file_module::upload_server_files(
             params.remote_paths.clone(), params.local_paths.clone(),
-            &params.username, &params.password, &params.server,
+            &params.username, &params.password, &params.server, None, None,
         ).await;
         let result_str = match &result {
             Ok(_) => "ok",

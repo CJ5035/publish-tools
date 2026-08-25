@@ -6,6 +6,7 @@ use tauri::Manager;
 use SmomPublish::cmd_module::auto_start_module;
 use SmomPublish::cmd_module::file_module;
 use SmomPublish::cmd_module::parse_sln_module;
+use SmomPublish::cmd_module::tfs_module;
 use SmomPublish::cmd_module::wpf_upgrade_module;
 
 // 了解更多关于 Tauri 命令的信息，请访问：https://tauri.app/v1/guides/features/command
@@ -130,11 +131,17 @@ fn main() {
             file_module::copy_sie_dlls,
             file_module::copy_non_sie_dlls,
             file_module::copy_dll_files_by_name,
+            file_module::copy_dll_files_by_names,
             file_module::read_dlls_by_name,
             file_module::invalidate_ssh_session,
+            file_module::scan_server_directories,
+            file_module::scan_server_services,
+            file_module::scan_wpf_publish_dirs,
+            file_module::check_service_health,
             wpf_upgrade_module::upgrade_module_version,
             parse_sln_module::parse_sln_project,
             parse_sln_module::find_assembly_name,
+            tfs_module::detect_tfs_workspace,
         ])
         // 保持前端在后台运行
         .on_window_event(|window, event| if let tauri::WindowEvent::CloseRequested { api, .. } = event {

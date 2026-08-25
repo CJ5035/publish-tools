@@ -91,6 +91,7 @@ import { useRestoreDb } from "@/database/restore/index";
 import { formatDate } from "@/utils/formatTime";
 import { ElMessage } from "element-plus";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 
 // 定义子组件向父组件传值/事件
 const emit = defineEmits(["refresh"]);
@@ -575,7 +576,7 @@ const restoreRemoteWpfServer = async (
 
       // 将本地 Manifest.xml 上传到服务器
       printInfoLog("正在将 Manifest.xml 上传到服务器.");
-      const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+      const uploadManifestFileResult = await uploadServerFilesWithRetry({
         localPaths: [localManifestFile],
         remotePaths: [remoteManifestFile],
         username,

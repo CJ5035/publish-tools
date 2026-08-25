@@ -129,6 +129,7 @@ export default {
 		oneClickPublishTip: '開啟後顯示一鍵發布按鈕與定時發布中的一鍵發布選項',
 		winServiceRetry: 'Windows 服務啟停重試',
 		winCopyRetry: 'Windows 複製重試',
+		winUploadRetry: '上傳重試',
 		retryCount: '重試次數',
 		retryInterval: '重試間隔（秒）',
 		save: '保 存',
@@ -147,6 +148,10 @@ export default {
 		mcpStatusStopped: '已停止',
 		mcpStatusStarting: '啟動中',
 		mcpConfigSaved: 'MCP 配置已儲存，重新啟動應用後生效',
+		msBuildPath: 'MsBuild 路徑',
+		msBuildPathPlaceholder: '例：C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe',
+		msBuildPathTip: '全域預設 MsBuild 路徑，新建專案時自動填入',
+		msBuildPathNotExistWarn: 'MsBuild 路徑不存在，請檢查',
 	},
 	about: {
 		title: '關於',

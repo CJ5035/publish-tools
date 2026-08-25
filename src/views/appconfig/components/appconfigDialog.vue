@@ -68,6 +68,18 @@
               </el-select>
             </el-form-item>
           </el-col>
+          <el-col :span="24" class="mb15" v-if="tfsDetected || tfsDetectFailed">
+            <el-alert v-if="tfsDetected" type="success" :closable="false" show-icon
+              :title="`TFS 识别：${tfsDetected.tfsSourcePath}（${tfsDetected.tfsServerUrl}）`">
+              <div>本地根目录：{{ tfsDetected.tfsLocalPath }}｜工作区：{{ tfsDetected.workspaceName }}</div>
+              <div v-if="tfsMatchedExisting">已自动匹配现有TFS记录，发布模式选"TFS"时直接可用</div>
+              <div v-else style="margin-top:6px;">
+                <el-input v-model="tfsDetected.tfsName" maxlength="50" size="small" style="width:220px;" placeholder="TFS名称" />
+                <el-button size="small" type="primary" style="margin-left:8px;" @click="onSaveDetectedTfs">保存为TFS记录并选中</el-button>
+              </div>
+            </el-alert>
+            <el-alert v-else type="warning" :closable="false" show-icon :title="tfsDetectFailed" />
+          </el-col>
           <el-col :span="15" class="mb15" v-show="state.ruleForm.dllMode === 'DLL名称'">
             <el-form-item label-width="0" prop="dllModeValue">
               <el-input v-model="state.ruleForm.dllModeValue" type="textarea" :rows="3"
@@ -517,6 +529,9 @@
 import { nextTick, reactive, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage } from "element-plus";
+import { detectTfsForSln, saveTfsRecord, findTfsDuplicate } from "@/utils/tfsDetect";
+import type { TfsDetectInfo } from "@/utils/tfsDetect";
+import { normalizeWpfClientServer, syncWpfClientLegacyFields } from "@/utils/wpfClientConfig";
 import { CirclePlus, Remove, Files } from "@element-plus/icons-vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import _ from "lodash";
@@ -581,6 +596,10 @@ const selectGitItem = ref<SelectGitType>({
     },
   ],
 });
+// TFS 自动识别（选 SLN 后触发；与 tfsId 下拉联动）
+const tfsDetected = ref<TfsDetectInfo | null>(null);
+const tfsDetectFailed = ref("");
+const tfsMatchedExisting = ref(false);
 const state = reactive<FormDialogType<RowAppconfigType>>({
   ruleForm: {
     id: null,
@@ -709,6 +728,22 @@ const onSlnFileChange = async () => {
       generateDirs.value
     );
   }
+  // TFS 自动识别：命中存量记录则预选 tfsId；未命中提示可保存（不切换 dllMode，不静默落库）
+  tfsDetected.value = null;
+  tfsDetectFailed.value = "";
+  tfsMatchedExisting.value = false;
+  const detected = await detectTfsForSln(slnFilePath);
+  if (!detected) {
+    tfsDetectFailed.value = "未识别到 TFS 工作区（可忽略，不影响本弹窗）";
+    return true;
+  }
+  tfsDetected.value = detected;
+  const dup = findTfsDuplicate(tfsList.value ?? [], detected);
+  if (dup?.id) {
+    tfsMatchedExisting.value = true;
+    selectTfsItem.value.id = dup.id;
+    await onTfsChange(dup.id);
+  }
   return true;
 };
 
@@ -758,7 +793,8 @@ const onDllModeChange = async (val: string) => {
     state.ruleForm.configItems.wpfClient.isCompress = 0;
   }
   state.ruleForm.dllModeValue = null;
-  dllModeDate.value = [Object(null), Object(null)];
+  // 置空必须是 undefined：非 Date 真值（如 {}）会被 element-plus 解析成 Invalid Dayjs，日历无法选中
+  dllModeDate.value = undefined;
 
   // TFS
   selectTfsItem.value.id = null;
@@ -906,33 +942,6 @@ const onWpfClientServerChange = async (val: number[]) => {
         },
       ],
     });
-  }
-};
-
-// 存量兼容：旧单服务器配置归一化为多服务器结构
-const normalizeWpfClientServer = (wpfClient: WpfClientConfigType) => {
-  if (!wpfClient) return;
-  // 旧数据可能没有 serverIds/serverArr 字段（serverId 为 null 时），先补齐为数组，
-  // 避免切换监听中访问 serverArr.length 时报错导致发布路径输入项不显示
-  if (!wpfClient.serverIds) wpfClient.serverIds = [];
-  if (!wpfClient.serverArr) wpfClient.serverArr = [];
-  if (
-    wpfClient.serverArr.length < 1 &&
-    wpfClient.serverId
-  ) {
-    wpfClient.serverIds = [wpfClient.serverId];
-    wpfClient.serverArr = [
-      {
-        id: wpfClient.serverId,
-        name: wpfClient.serverName,
-        serverPathArr: [
-          {
-            label: "",
-            value: [{ identity: "", path: wpfClient.serverPath || "" }],
-          },
-        ],
-      },
-    ];
   }
 };
 
@@ -1125,6 +1134,23 @@ const onTfsChange = async (val: number) => {
   }
 };
 
+// 保存识别结果为新 TFS 记录并选中（用户主动触发）
+const onSaveDetectedTfs = async () => {
+  if (!tfsDetected.value) return;
+  try {
+    const r = await saveTfsRecord(tfsDetected.value);
+    await getTfsList();
+    if (r.id) {
+      selectTfsItem.value.id = r.id;
+      await onTfsChange(r.id);
+    }
+    tfsMatchedExisting.value = true;
+    ElMessage.success(r.reused ? "已复用现有TFS记录" : "已保存为新TFS记录并选中");
+  } catch (e: any) {
+    ElMessage.error(String(e.message ?? e)); // 撞名等错误提示
+  }
+};
+
 // 选择Git切换
 const onGitChange = async (val: number) => {
   if (!gitList.value) return;
@@ -1245,6 +1271,7 @@ const formReset = () => {
   state.ruleForm.configItems.wpfClient.isCompress = null;
   state.ruleForm.dllMode = "全部";
   state.ruleForm.buildMode = "Debug";
+  dllModeDate.value = undefined; // 消除上一次弹窗会话的残留日期
   if (state.ruleForm.projectId == 0) state.ruleForm.projectId = null;
   if (state.ruleForm.environment == 0) state.ruleForm.environment = 1;
   state.dialog.editId = null;
@@ -1278,6 +1305,9 @@ const formReset = () => {
       },
     ],
   };
+  tfsDetected.value = null;
+  tfsDetectFailed.value = "";
+  tfsMatchedExisting.value = false;
 };
 
 // 打开弹窗
@@ -1346,6 +1376,9 @@ const onCancel = () => {
 
 // 提交
 const onSubmit = async () => {
+  // 新→旧回写（诊断 20260824）：发布链路与发布页展示读 serverId/serverName/serverPath，
+  // 不回写则弹窗改的发布路径/换绑服务器不生效于发布
+  syncWpfClientLegacyFields(state.ruleForm.configItems.wpfClient);
   state.ruleForm.configItemsJson = JSON.stringify(state.ruleForm.configItems);
   if (state.ruleForm.dllMode == "TFS") {
     const selectedItem = _.cloneDeep(selectTfsItem.value) as SelectTfsType;

@@ -6,5 +6,8 @@ declare interface RowSettingsType {
 	winServiceRetryInterval: number;  // 秒
 	winCopyRetryCount: number;
 	winCopyRetryInterval: number;         // 秒
+	winUploadRetryCount: number;          // SSH upload 外层总调用次数，1-100
+	winUploadRetryInterval: number;       // SSH upload 外层失败等待间隔（秒），1-60
+	msBuildPath: string | null;
 	updateTime?: string;
 }

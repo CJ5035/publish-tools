@@ -144,7 +144,10 @@ import { CircleClose } from "@element-plus/icons-vue";
 import { Promotion, VideoPause, VideoPlay, Close } from "@element-plus/icons-vue";
 import { cmdInvoke } from "@/utils/command";
 import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
-import { removeSlash, displayEnvironment, displayOs, aesDecrypt, formatServiceLog } from "@/utils/other";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
+import { removeSlash, displayEnvironment, displayOs, aesDecrypt } from "@/utils/other";
+import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
 const RemotePublishItem = defineAsyncComponent(
@@ -167,6 +170,9 @@ const publishItem = ref({
   stopped: false,
   resumeResolve: null as (() => void) | null,
 });
+
+// 阶段2：发布任务记录器（papersPublish 链路）
+let deployRecorder: DeployRecorder | null = null;
 
 // 发布流程检查点
 const checkCanContinue = async () => {
@@ -268,13 +274,6 @@ const onSelectPublishFile = async () => {
   Object.assign(publishConfig, readPublishConfig);
   switch (readPublishConfig.publishMode) {
     case 0: // 远程发布
-      // 兼容旧 .smom 文件：wpfClient 单值对象 → 单元素数组
-      if (
-        readPublishConfig.wpfClient &&
-        !Array.isArray(readPublishConfig.wpfClient)
-      ) {
-        readPublishConfig.wpfClient = [readPublishConfig.wpfClient];
-      }
       remotePublishConfig.value = readPublishConfig as RemotePublishType;
       break;
     case 1: // 本机发布
@@ -306,6 +305,18 @@ const onPublish = async () => {
   onRemoveLogs();
   initLogs();
   printInfoLog("");
+  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
+    (s) => {
+      const cfg = (publishConfig as any)[s];
+      return Array.isArray(cfg) ? cfg.length > 0 : !_.isEmpty(cfg);
+    }
+  );
+  deployRecorder = await createDeployRecorder({
+    source: "papersPublish",
+    projectName: publishConfig.projectName,
+    environment: Number(publishConfig.environment),
+    selectedServices: serviceNames,
+  });
   try {
     switch (publishConfig.publishMode) {
       case 0: // 远程发布
@@ -323,6 +334,7 @@ const onPublish = async () => {
       printInfoLog("发布已停止.", "log-warning");
     }
   } finally {
+    await deployRecorder?.finish();
     publishItem.value.loading = false;
     publishItem.value.loadingText = "发布中";
     const delPapersPublishDirPath = await papersPublishDir();
@@ -430,7 +442,6 @@ const localPublishWpfServer = async (
 ) => {
   printInfoLog(`正在发布 ${serverName} 服务.`);
   const mPublishDir = await papersPublishDir();
-  const logPrefix = formatServiceLog(publishServer.serverName, publishServer.serverIp, serverName, "");
 
   // 创建一个Wpf临时操作目录
   const wpfPublishDir = `${removeSlash(mPublishDir)}/${serverName}/tempPublish`;
@@ -534,7 +545,7 @@ const localPublishWpfServer = async (
 
       // 压缩成功后重新复制到服务器
       printInfoLog(
-        `${logPrefix} 正在将 Plugins.zip 文件复制到服务器.`
+        `正在将 Plugins.zip 文件复制到 ${serverName.replace("服务器", "")} 服务器.`
       );
       const copyPluginsFileResult = await cmdInvoke("copy_path", {
         source: `${removeSlash(wpfPublishDir)}/Plugins.zip`,
@@ -546,7 +557,7 @@ const localPublishWpfServer = async (
         return false;
       }
       printInfoLog(
-        `${logPrefix} 已将 Plugins.zip 文件复制到服务器.`,
+        `已将 Plugins.zip 文件复制到 ${serverName?.replace("服务器", "")}服务器.`,
         "log-success"
       );
     } else {
@@ -564,7 +575,7 @@ const localPublishWpfServer = async (
 
       // 重新打包压缩
       printInfoLog(
-        `${logPrefix} 正在将 ${dirName}.zip 文件复制到服务器.`
+        `正在将 ${dirName}.zip 文件复制到 ${serverName?.replace("服务器", "")}服务器.`
       );
       const compresseResult = await cmdInvoke("compress_zip", {
         filePaths: [destinationPath],
@@ -586,7 +597,7 @@ const localPublishWpfServer = async (
         return false;
       }
       printInfoLog(
-        `${logPrefix} 已将 ${dirName}.zip 文件复制到服务器.`,
+        `已将 ${dirName}.zip 文件复制到 ${serverName?.replace("服务器", "")} 服务器.`,
         "log-success"
       );
     }
@@ -654,9 +665,13 @@ const localPublishServer = async (
   // 服务发布配置信息
   for (let j = 0; j < publishServer.serverConfigs.length; j++) {
     const serverConfig = publishServer.serverConfigs[j];
-    const logPrefix = formatServiceLog(publishServer.serverName || serverName, publishServer.serverIp, serverName, serverConfig.serverIdentity);
+    const detailId = (await deployRecorder?.step(serverName, "switch", {
+      serverName: publishServer.serverName,
+      serverIdentity: serverConfig.serverIdentity,
+      remotePath: removeSlash(serverConfig.publishPath),
+    })) ?? null;
     /* 1.关闭服务 */
-    printInfoLog(`${logPrefix} 正在关闭...`);
+    printInfoLog(`正在关闭 ${serverName} 服务.`);
     let closeServiceResult;
     if (osName == "Windows") {
       closeServiceResult = await switchLocalWinService(
@@ -670,16 +685,19 @@ const localPublishServer = async (
       );
     } else {
       printInfoLog(`未找到 ${osName} 部署环境，请检查.`, "log-error");
+      await deployRecorder?.done(detailId, "failed", { errorMessage: "未找到部署环境", step: "switch" });
       return false;
     }
     if (!closeServiceResult) {
-      printInfoLog(`${logPrefix} 关闭失败.`, "log-error");
+      printInfoLog(`服务 ${serverName} 关闭失败.`, "log-error");
+      await deployRecorder?.done(detailId, "failed", { errorMessage: "关闭服务失败", step: "switch" });
       return false;
     }
-    printInfoLog(`${logPrefix} 已关闭.`, "log-success");
+    printInfoLog(`服务 ${serverName} 已关闭.`, "log-success");
+    await deployRecorder?.done(detailId, "running", { step: "copy" });
 
     /* 上传文件到服务器 */
-    const currLogIndex = printInfoLog(`${logPrefix} 正在部署文件...`);
+    const currLogIndex = printInfoLog(`服务 ${serverName} 正在发布.`);
     let uploadFileNumber: UploadFileNumberType = {
       currNumber: 0,
       totalNumber: 0,
@@ -699,9 +717,10 @@ const localPublishServer = async (
       });
       if (uploadServerFileResult.code !== 0) {
         printInfoLog(
-          `${logPrefix} 发布失败：${uploadServerFileResult.data}.`,
+          `服务 ${serverName} 发布失败：${uploadServerFileResult.data}.`,
           "log-error"
         );
+        await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serverName} 发布失败：${uploadServerFileResult.data}`, step: "copy" });
         return false;
       }
       uploadFileNumber.currNumber++;
@@ -713,10 +732,11 @@ const localPublishServer = async (
         uploadFileNumber.totalNumber;
     }
     printInfoLog(
-      `${logPrefix} 已将 ${serverConfig.publishFiles.length} 个文件部署到服务器.`,
+      `已将 ${serverConfig.publishFiles.length} 个文件部署到 ${serverName} 服务器.`,
       "log-success"
     );
-    printInfoLog(`${logPrefix} 正在启动.`);
+    await deployRecorder?.done(detailId, "running", { step: "switch" });
+    printInfoLog(`服务 ${serverName} 正在启动.`);
     let startServiceResult;
     if (osName === "Windows") {
       startServiceResult = await switchLocalWinService(
@@ -731,10 +751,12 @@ const localPublishServer = async (
     }
 
     if (!startServiceResult) {
-      printInfoLog(`${logPrefix} 启动失败.`, "log-error");
+      printInfoLog(`服务 ${serverName} 启动失败.`, "log-error");
+      await deployRecorder?.done(detailId, "failed", { errorMessage: "启动服务失败", step: "switch" });
       return false;
     }
-    printInfoLog(`${logPrefix} 发布成功.`, "log-success");
+    printInfoLog(`服务 ${serverName} 发布成功.`, "log-success");
+    await deployRecorder?.done(detailId, "success");
   }
   printInfoLog("");
   return true;
@@ -761,7 +783,7 @@ const switchLocalWinService = async (serviceName: string, action: "stop" | "star
   const switchServerResult = await cmdInvoke("execute_local_command", {
     command: "net",
     args: [action, serviceName],
-    ...getRetryArgs("service"),
+    ...getRetryArgs("serviceStop"),
   });
   if (switchServerResult.code !== 0) printInfoLog(switchServerResult.data, "log-error");
   return switchServerResult.code === 0;
@@ -1201,27 +1223,27 @@ const remoteServerPublish = async () => {
     remotePublishConfig.value.wpfClient &&
     !_.isEmpty(remotePublishConfig.value.wpfClient)
   ) {
-    for (
-      let wpfIndex = 0;
-      wpfIndex < remotePublishConfig.value.wpfClient.length;
-      wpfIndex++
-    ) {
-      const wpfClientItem = remotePublishConfig.value.wpfClient[wpfIndex];
-      let publishWpfResult;
-      if (remotePublishConfig.value.isNewVersion) {
-        publishWpfResult = await newRemotePublishWpfServer(
-          wpfClientItem,
-          "WpfClient"
-        );
-      } else {
-        publishWpfResult = await remotePublishWpfServer(
-          wpfClientItem,
-          "WpfClient"
-        );
-      }
-      if (!publishWpfResult) {
-        return false;
-      }
+    const _wpf: any = remotePublishConfig.value.wpfClient;
+    const wpfObj = Array.isArray(_wpf) ? _wpf[0] : _wpf;
+    const wpfDetailId = (await deployRecorder?.step("WpfClient", "upload", {
+      serverName: wpfObj.serverName,
+      remotePath: removeSlash(wpfObj.publishPath || ""),
+    })) ?? null;
+    let publishWpfResult;
+    if (remotePublishConfig.value.isNewVersion) {
+      publishWpfResult = await newRemotePublishWpfServer(
+        wpfObj,
+        "WpfClient"
+      );
+    } else {
+      publishWpfResult = await remotePublishWpfServer(
+        wpfObj,
+        "WpfClient"
+      );
+    }
+    await deployRecorder?.done(wpfDetailId, publishWpfResult ? "success" : "failed");
+    if (!publishWpfResult) {
+      return false;
     }
   }
 
@@ -1251,7 +1273,6 @@ const newRemotePublishWpfServer = async (
 ) => {
   printInfoLog(`正在发布 ${serverName} 服务.`);
   const mPublishDir = await papersPublishDir();
-  const logPrefix = formatServiceLog(publishServer.serverName, publishServer.serverIp, serverName, "");
 
   // 服务器信息
   const username = publishServer.serverAccount;
@@ -1364,9 +1385,9 @@ const newRemotePublishWpfServer = async (
 
       // 压缩成功后重新上传到服务器
       printInfoLog(
-        `${logPrefix} 正在将 ${dirName}.zip 文件上传到服务器.`
+        `正在将 ${dirName}.zip 文件上传到 ${serverName.replace("服务器", "")} 服务器.`
       );
-      const uploadPluginsFileResult = await cmdInvoke("upload_server_files", {
+      const uploadPluginsFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/Plugins.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/Plugins.zip`],
         username,
@@ -1378,7 +1399,7 @@ const newRemotePublishWpfServer = async (
         return false;
       }
       printInfoLog(
-        `${logPrefix} 已将 ${dirName}.zip 文件上传到服务器.`,
+        `已将 ${dirName}.zip 文件上传到 ${serverName?.replace("服务器", "")}服务器.`,
         "log-success"
       );
     } else {
@@ -1396,7 +1417,7 @@ const newRemotePublishWpfServer = async (
 
       // 重新打包压缩
       printInfoLog(
-        `${logPrefix} 正在将 ${dirName}.zip 文件上传到服务器.`
+        `正在将 ${dirName}.zip 文件上传到 ${serverName?.replace("服务器", "")}服务器.`
       );
       const compresseResult = await cmdInvoke("compress_zip", {
         filePaths: [destinationPath],
@@ -1408,7 +1429,7 @@ const newRemotePublishWpfServer = async (
       }
 
       // 压缩成功后重新上传到服务器
-      const uploadFileResult = await cmdInvoke("upload_server_files", {
+      const uploadFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/${dirName}.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/${dirName}.zip`],
         username,
@@ -1420,7 +1441,7 @@ const newRemotePublishWpfServer = async (
         return false;
       }
       printInfoLog(
-        `${logPrefix} 已将 ${dirName}.zip 文件上传到服务器.`,
+        `已将 ${dirName}.zip 文件上传到 ${serverName?.replace("服务器", "")} 服务器.`,
         "log-success"
       );
     }
@@ -1447,7 +1468,7 @@ const newRemotePublishWpfServer = async (
 
     // 将本机 Manifest.xml 上传到服务器
     const remoteManifestPath = `${removeSlash(publishServer.publishPath)}/Manifest.xml`;
-    const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+    const uploadManifestFileResult = await uploadServerFilesWithRetry({
       localPaths: [localManifestFile],
       remotePaths: [remoteManifestPath],
       username,
@@ -1481,7 +1502,6 @@ const remotePublishWpfServer = async (
 ) => {
   printInfoLog(`正在发布 ${serverName} 服务.`);
   const mPublishDir = await papersPublishDir();
-  const logPrefix = formatServiceLog(publishServer.serverName, publishServer.serverIp, serverName, "");
 
   // 服务器信息
   const username = publishServer.serverAccount;
@@ -1608,9 +1628,9 @@ const remotePublishWpfServer = async (
 
       // 压缩成功后重新上传到服务器
       printInfoLog(
-        `${logPrefix} 正在将 Plugins.zip 文件上传到服务器.`
+        `正在将 Plugins.zip 文件上传到 ${serverName.replace("服务器", "")} 服务器.`
       );
-      const uploadPluginsFileResult = await cmdInvoke("upload_server_files", {
+      const uploadPluginsFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/Plugins.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/Plugins.zip`],
         username,
@@ -1622,7 +1642,7 @@ const remotePublishWpfServer = async (
         return false;
       }
       printInfoLog(
-        `${logPrefix} 已将 Plugins.zip 文件上传到服务器.`,
+        `已将 Plugins.zip 文件上传到 ${serverName?.replace("服务器", "")}服务器.`,
         "log-success"
       );
     } else {
@@ -1640,7 +1660,7 @@ const remotePublishWpfServer = async (
 
       // 重新打包压缩
       printInfoLog(
-        `${logPrefix} 正在将 ${dirName}.zip 文件上传到服务器.`
+        `正在将 ${dirName}.zip 文件上传到 ${serverName?.replace("服务器", "")}服务器.`
       );
       const compresseResult = await cmdInvoke("compress_zip", {
         filePaths: [destinationPath],
@@ -1652,7 +1672,7 @@ const remotePublishWpfServer = async (
       }
 
       // 压缩成功后重新上传到服务器
-      const uploadFileResult = await cmdInvoke("upload_server_files", {
+      const uploadFileResult = await uploadServerFilesWithRetry({
         localPaths: [`${removeSlash(wpfPublishDir)}/${dirName}.zip`],
         remotePaths: [`${removeSlash(publishServer.publishPath)}/${dirName}.zip`],
         username,
@@ -1664,7 +1684,7 @@ const remotePublishWpfServer = async (
         return false;
       }
       printInfoLog(
-        `${logPrefix} 已将 ${dirName}.zip 文件上传到服务器.`,
+        `已将 ${dirName}.zip 文件上传到 ${serverName?.replace("服务器", "")} 服务器.`,
         "log-success"
       );
     }
@@ -1691,7 +1711,7 @@ const remotePublishWpfServer = async (
 
     // 将本机 Manifest.xml 上传到服务器
     const remoteManifestPath = `${removeSlash(publishServer.publishPath)}/Manifest.xml`;
-    const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+    const uploadManifestFileResult = await uploadServerFilesWithRetry({
       localPaths: [localManifestFile],
       remotePaths: [remoteManifestPath],
       username,
@@ -1737,9 +1757,13 @@ const remotePublishServer = async (
     // 服务发布配置信息
     for (let j = 0; j < publishServer.serverConfigs.length; j++) {
       const serverConfig = publishServer.serverConfigs[j];
-      const logPrefix = formatServiceLog(publishServer.serverName || serverName, publishServer.serverIp, serverName, serverConfig.serverIdentity);
+      const detailId = (await deployRecorder?.step(serverName, "switch", {
+        serverName: publishServer.serverName,
+        serverIdentity: serverConfig.serverIdentity,
+        remotePath: removeSlash(serverConfig.publishPath),
+      })) ?? null;
       /* 1.关闭服务 */
-      printInfoLog(`${logPrefix} 正在关闭...`);
+      printInfoLog(`正在关闭 ${serverName} 服务.`);
       let closeServiceResult;
       if (osName == "Windows") {
         closeServiceResult = await switchRemoteWinService(
@@ -1759,16 +1783,19 @@ const remotePublishServer = async (
         );
       } else {
         printInfoLog(`未找到 ${osName} 部署环境，请检查.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "未找到部署环境", step: "switch" });
         return false;
       }
       if (!closeServiceResult) {
-        printInfoLog(`${logPrefix} 关闭失败.`, "log-error");
+        printInfoLog(`服务 ${serverName} 关闭失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "关闭服务失败", step: "switch" });
         return false;
       }
-      printInfoLog(`${logPrefix} 已关闭.`, "log-success");
+      printInfoLog(`服务 ${serverName} 已关闭.`, "log-success");
+      await deployRecorder?.done(detailId, "running", { step: "upload" });
 
       /* 上传文件到服务器 */
-      const currLogIndex = printInfoLog(`${logPrefix} 正在部署文件...`);
+      const currLogIndex = printInfoLog(`服务 ${serverName} 正在发布.`);
       let uploadFileNumber: UploadFileNumberType = {
         currNumber: 0,
         totalNumber: 0,
@@ -1779,7 +1806,7 @@ const remotePublishServer = async (
       for (let f = 0; f < serverConfig.publishFiles.length; f++) {
         await checkCanContinue();
         const publishFile = serverConfig.publishFiles[f];
-        const uploadServerFileResult = await cmdInvoke("upload_server_files", {
+        const uploadServerFileResult = await uploadServerFilesWithRetry({
           localPaths: [`${mPublishDir}/${serverName}/${publishFile}`],
           remotePaths: [`${removeSlash(serverConfig.publishPath)}/${publishFile}`],
           username,
@@ -1788,9 +1815,10 @@ const remotePublishServer = async (
         });
         if (uploadServerFileResult.code !== 0) {
           printInfoLog(
-            `${logPrefix} 发布失败：${uploadServerFileResult.data}.`,
+            `服务 ${serverName} 发布失败：${uploadServerFileResult.data}.`,
             "log-error"
           );
+          await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serverName} 发布失败：${uploadServerFileResult.data}`, step: "upload" });
           return false;
         }
         uploadFileNumber.currNumber++;
@@ -1803,10 +1831,11 @@ const remotePublishServer = async (
       }
 
       printInfoLog(
-        `${logPrefix} 已将 ${serverConfig.publishFiles.length} 个文件上传到服务器.`,
+        `已将 ${serverConfig.publishFiles.length} 个文件上传到 ${serverName} 服务器.`,
         "log-success"
       );
-      printInfoLog(`${logPrefix} 正在启动.`);
+      await deployRecorder?.done(detailId, "running", { step: "switch" });
+      printInfoLog(`服务 ${serverName} 正在启动.`);
       let startServiceResult;
 
       if (osName === "Windows") {
@@ -1827,10 +1856,12 @@ const remotePublishServer = async (
         );
       }
       if (!startServiceResult) {
-        printInfoLog(`${logPrefix} 启动失败.`, "log-error");
+        printInfoLog(`服务 ${serverName} 启动失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "启动服务失败", step: "switch" });
         return false;
       }
-      printInfoLog(`${logPrefix} 发布成功.`, "log-success");
+      printInfoLog(`服务 ${serverName} 发布成功.`, "log-success");
+      await deployRecorder?.done(detailId, "success");
     }
   }
   printInfoLog("");
@@ -1977,32 +2008,31 @@ const remotePublishBeforeBackup = async () => {
     remotePublishConfig.value.wpfClient &&
     !_.isEmpty(remotePublishConfig.value.wpfClient)
   ) {
-    for (
-      let wpfIndex = 0;
-      wpfIndex < remotePublishConfig.value.wpfClient.length;
-      wpfIndex++
-    ) {
-      const wpfClientItem = remotePublishConfig.value.wpfClient[wpfIndex];
-      const backupResult = await remotePublishWpfBackup(
-        wpfClientItem,
-        currentDate,
-        "WpfClient",
-        remotePublishConfig.value.isNewVersion,
-        publishConfig.backupBasePath
-      );
-      if (backupResult.code !== 0) {
-        printInfoLog(backupResult.msg, "log-error");
-        return false;
-      }
-
-      // 备份路径
-      const backupPath = getBackupPath(
-        wpfClientItem.publishPath,
-        currentDate,
-        publishConfig.backupBasePath
-      );
-      bRemotePublishConfig.wpfClient[wpfIndex].backupPath = backupPath;
+    const _wpf: any = remotePublishConfig.value.wpfClient;
+    const wpfObj = Array.isArray(_wpf) ? _wpf[0] : _wpf;
+    const backupResult = await remotePublishWpfBackup(
+      wpfObj,
+      currentDate,
+      "WpfClient",
+      remotePublishConfig.value.isNewVersion,
+      publishConfig.backupBasePath
+    );
+    if (backupResult.code !== 0) {
+      printInfoLog(backupResult.msg, "log-error");
+      return false;
     }
+
+    // 备份路径
+    const _bWpf: any = bRemotePublishConfig.wpfClient;
+    const bWpfObj = Array.isArray(_bWpf) ? _bWpf[0] : _bWpf;
+    const backupPath = getBackupPath(
+      bWpfObj.publishPath,
+      currentDate,
+      publishConfig.backupBasePath
+    );
+    bWpfObj.backupPath = backupPath;
+    if (Array.isArray(_bWpf)) _bWpf[0] = bWpfObj;
+    else bRemotePublishConfig.wpfClient = bWpfObj;
   }
 
   // 保存备份记录数据
@@ -2297,7 +2327,7 @@ const switchRemoteWinService = async (
     password,
     server,
     command: `net ${action} "${serviceName}"`,
-    ...getRetryArgs("service"),
+    ...getRetryArgs("serviceStop"),
   });
   if (switchServerResult.code !== 0) printInfoLog(switchServerResult.data, "log-error");
   return switchServerResult.code === 0;

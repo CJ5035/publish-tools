@@ -82,16 +82,18 @@ import { path } from "@tauri-apps/api";
 import { CircleClose } from "@element-plus/icons-vue";
 import _ from "lodash";
 import { cmdInvoke } from "@/utils/command";
+import { loadPublishSettings } from "@/utils/publishSettings";
+import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
+import { createDeployRecorder } from "@/utils/deployTaskRecorder";
+import type { DeployRecorder } from "@/utils/deployTaskRecorder";
 import {
   getDefaultSubObject,
   displayOs,
   removeSlash,
   displayEnvironment,
   aesDecrypt,
-  formatServiceLog,
 } from "@/utils/other";
 import { useRestoreDb } from "@/database/restore/index";
-import { loadPublishSettings, getRetryArgs } from "@/utils/publishSettings";
 import { formatDate } from "@/utils/formatTime";
 import { ElMessage } from "element-plus";
 
@@ -100,6 +102,9 @@ const emit = defineEmits(["refresh"]);
 
 // 引入项目管理数据库
 const restoreDb = useRestoreDb();
+
+// 阶段2：发布任务记录器（source='restore'）
+let deployRecorder: DeployRecorder | null = null;
 
 // 定义变量内容
 const logPrintInfo = ref<LogPrintType[]>([]);
@@ -113,7 +118,7 @@ const state = reactive<FormDialogType<BackupRemotePublishType>>({
     webClient: [],
     scheduleServer: [],
     spcMonitor: [],
-    wpfClient: [],
+    wpfClient: null,
     isNewVersion: false,
   },
   dialog: {
@@ -135,45 +140,63 @@ const onRestore = async () => {
   printInfoLog("项目名称：" + state.ruleForm.projectName);
   printInfoLog("项目环境：" + displayEnvironment(Number(state.ruleForm.environment)));
   printInfoLog("");
+  const serviceNames = ["WebApiHost", "ScheduleServer", "WebClient", "SpcMonitor", "WpfClient"].filter(
+    (s) => {
+      const cfg = (state.ruleForm as any)[s];
+      return Array.isArray(cfg) ? cfg.length > 0 : !_.isEmpty(cfg);
+    }
+  );
+  deployRecorder = await createDeployRecorder({
+    source: "restore",
+    projectName: state.ruleForm.projectName,
+    environment: Number(state.ruleForm.environment),
+    selectedServices: serviceNames,
+  });
 
   // 还原结果
   let restoreResult = true;
+  try {
+    // 还原[WebApiHost]
+    restoreResult = await restoreRemoteServer("WebApiHost", state.ruleForm.webApiHost);
 
-  // 还原[WebApiHost]
-  restoreResult = await restoreRemoteServer("WebApiHost", state.ruleForm.webApiHost);
+    // 还原[ScheduleServer]
+    if (restoreResult) {
+      restoreResult = await restoreRemoteServer(
+        "ScheduleServer",
+        state.ruleForm.scheduleServer
+      );
+    }
 
-  // 还原[ScheduleServer]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteServer(
-      "ScheduleServer",
-      state.ruleForm.scheduleServer
-    );
-  }
+    // 还原[WebClient]
+    if (restoreResult) {
+      restoreResult = await restoreRemoteServer("WebClient", state.ruleForm.webClient);
+    }
 
-  // 还原[WebClient]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteServer("WebClient", state.ruleForm.webClient);
-  }
+    // 还原[SpcMonitor]
+    if (restoreResult) {
+      restoreResult = await restoreRemoteServer("SpcMonitor", state.ruleForm.spcMonitor);
+    }
 
-  // 还原[SpcMonitor]
-  if (restoreResult) {
-    restoreResult = await restoreRemoteServer("SpcMonitor", state.ruleForm.spcMonitor);
-  }
-
-  // 还原[WpfClient]
-  if (restoreResult) {
-    for (
-      let wpfIndex = 0;
-      wpfIndex < (state.ruleForm.wpfClient || []).length;
-      wpfIndex++
-    ) {
+    // 还原[WpfClient]
+    if (restoreResult) {
+      const _wpf: any = state.ruleForm.wpfClient;
+      const wpfObj = Array.isArray(_wpf) ? _wpf[0] : _wpf;
+      const wpfDetailId =
+        wpfObj && !_.isEmpty(wpfObj)
+          ? ((await deployRecorder?.step("WpfClient", "upload", {
+              serverName: wpfObj?.serverName,
+              remotePath: removeSlash(wpfObj?.publishPath || ""),
+            })) ?? null)
+          : null;
       restoreResult = await restoreRemoteWpfServer(
         "WpfClient",
-        state.ruleForm.wpfClient![wpfIndex],
+        wpfObj,
         state.ruleForm.isNewVersion
       );
-      if (!restoreResult) break;
+      await deployRecorder?.done(wpfDetailId, restoreResult ? "success" : "failed");
     }
+  } finally {
+    await deployRecorder?.finish(restoreResult ? undefined : "还原未完成");
   }
 
   printInfoLog("");
@@ -209,10 +232,14 @@ const restoreRemoteServer = async (
       const serviceIdentity = serverConfig.serverIdentity;
       const pPath = removeSlash(serverConfig.publishPath);
       const rPath = removeSlash(serverConfig.backupPath);
-      const logPrefix = formatServiceLog(restoreServer.serverName, restoreServer.serverIp, serviceName, serviceIdentity);
+      const detailId = (await deployRecorder?.step(serviceName, "switch", {
+        serverName: restoreServer.serverName,
+        serverIdentity: serviceIdentity,
+        remotePath: removeSlash(serverConfig.publishPath),
+      })) ?? null;
       let copyBackFileCommands = new Array<string>();
       let closeServiceResult = true;
-      printInfoLog(`${logPrefix} 正在关闭...`);
+      printInfoLog(`关闭 ${serviceName} 服务中...`);
       if (osName === "Windows") {
         closeServiceResult = await switchWinService(
           username,
@@ -248,12 +275,14 @@ const restoreRemoteServer = async (
         }
       }
       if (!closeServiceResult) {
-        printInfoLog(`${logPrefix} 关闭失败.`, "log-error");
+        printInfoLog(`服务 ${serviceName} 关闭失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "服务关闭失败", step: "switch" });
         state.dialog.submitTxt = "还 原";
         return false;
       }
-      printInfoLog(`${logPrefix} 已关闭.`, "log-success");
-      printInfoLog(`${logPrefix} 正在还原...`);
+      printInfoLog(`服务 ${serviceName} 已关闭.`, "log-success");
+      await deployRecorder?.done(detailId, "running", { step: "copy" });
+      printInfoLog(`服务 ${serviceName} 还原中.`);
       for (let cp = 0; cp < copyBackFileCommands.length; cp++) {
         const copyCommand = copyBackFileCommands[cp];
         const execRemoteCmdResult = await cmdInvoke("execute_remote_command", {
@@ -264,19 +293,21 @@ const restoreRemoteServer = async (
         });
         if (execRemoteCmdResult.code !== 0) {
           printInfoLog(
-            `${logPrefix} 还原失败：${execRemoteCmdResult.data}`,
+            `服务 ${serviceName} 还原失败：${execRemoteCmdResult.data}`,
             "log-error"
           );
           console.error(execRemoteCmdResult.data);
+          await deployRecorder?.done(detailId, "failed", { errorMessage: `服务 ${serviceName} 还原失败：${execRemoteCmdResult.data}`, step: "copy" });
           state.dialog.submitTxt = "还 原";
           return false;
         }
       }
       printInfoLog(
-        `${logPrefix} 已成功将 ${copyBackFileCommands.length}个备份文件还原到部署路径.`,
+        `已成功将  ${serviceName} 服务的${copyBackFileCommands.length}个备份文件还原到部署路径.`,
         "log-success"
       );
-      printInfoLog(`${logPrefix} 正在启动.`);
+      await deployRecorder?.done(detailId, "running", { step: "switch" });
+      printInfoLog(`服务 ${serviceName} 正在启动.`);
       let startServiceResult = true;
       if (osName === "Windows") {
         startServiceResult = await switchWinService(
@@ -296,10 +327,12 @@ const restoreRemoteServer = async (
         );
       }
       if (!startServiceResult) {
-        printInfoLog(`${logPrefix} 启动失败.`, "log-error");
+        printInfoLog(`服务 ${serviceName} 启动失败.`, "log-error");
+        await deployRecorder?.done(detailId, "failed", { errorMessage: "服务启动失败", step: "switch" });
         return false;
       }
-      printInfoLog(`${logPrefix} 还原成功.`, "log-success");
+      printInfoLog(`服务 ${serviceName} 还原成功.`, "log-success");
+      await deployRecorder?.done(detailId, "success");
       printInfoLog("");
     }
   }
@@ -319,7 +352,6 @@ const restoreRemoteWpfServer = async (
   const username = restoreServer.serverAccount;
   const password = await aesDecrypt(String(restoreServer.serverPwd));
   const server = `${restoreServer.serverIp}:${restoreServer.serverPort}`;
-  const logPrefix = formatServiceLog(restoreServer.serverName, restoreServer.serverIp, serviceName, "");
 
   const pPath = removeSlash(restoreServer.publishPath);
   const rPath = removeSlash(restoreServer.backupPath);
@@ -477,7 +509,7 @@ const restoreRemoteWpfServer = async (
       });
       if (unZipCmdResult.code !== 0) {
         printInfoLog(
-          `${logPrefix} 解压[${zipFileName}]失败：${unZipCmdResult.data}`,
+          `服务[${serviceName}]解压[${zipFileName}]失败：${unZipCmdResult.data}`,
           "log-error"
         );
         return false;
@@ -494,7 +526,7 @@ const restoreRemoteWpfServer = async (
       });
       if (execRemoteCmdResult.code !== 0) {
         printInfoLog(
-          `${logPrefix} 还原失败：${execRemoteCmdResult.data}`,
+          `服务[${serviceName}]还原失败：${execRemoteCmdResult.data}`,
           "log-error"
         );
         return false;
@@ -514,7 +546,7 @@ const restoreRemoteWpfServer = async (
     });
     if (execRemoteCmdResult.code !== 0) {
       printInfoLog(
-        `${logPrefix} 压缩失败：${execRemoteCmdResult.data}`,
+        `服务[${serviceName}]压缩失败：${execRemoteCmdResult.data}`,
         "log-error"
       );
       return false;
@@ -537,7 +569,7 @@ const restoreRemoteWpfServer = async (
   });
   if (delTempRestoreDirResult.code !== 0) {
     printInfoLog(
-      `${logPrefix} 删除临时还原目录失败：${delTempRestoreDirResult.data}`,
+      `服务[${serviceName}]删除临时还原目录失败：${delTempRestoreDirResult.data}`,
       "log-warning"
     );
   }
@@ -605,7 +637,7 @@ const restoreRemoteWpfServer = async (
 
   // 将本地 Manifest.xml 上传到服务器
   printInfoLog("正在将 Manifest.xml 上传到服务器.");
-  const uploadManifestFileResult = await cmdInvoke("upload_server_files", {
+  const uploadManifestFileResult = await uploadServerFilesWithRetry({
     localPaths: [localManifestFile],
     remotePaths: [remoteManifestFile],
     username,
@@ -624,7 +656,7 @@ const restoreRemoteWpfServer = async (
   await cmdInvoke("delete_paths", {
     paths: [localManifestFile],
   });
-  printInfoLog(`${logPrefix} 还原成功.`);
+  printInfoLog(`服务 ${serviceName} 还原成功.`);
   printInfoLog("");
 
   return true;
@@ -648,7 +680,6 @@ const switchWinService = async (
     password,
     server,
     command: `sc ${action} "${serviceName}"`,
-    ...getRetryArgs("service"),
   });
   if (switchServerResult.code !== 0) {
     printInfoLog(switchServerResult.data, "log-error");
@@ -764,10 +795,6 @@ const openDialog = (backupId: number, row: BackupRemotePublishType) => {
   /* End: 重置表单内容 */
   nextTick(() => {
     state.ruleForm = row;
-    // 存量兼容：旧备份记录 wpfClient 单值对象 → 单元素数组
-    if (state.ruleForm.wpfClient && !Array.isArray(state.ruleForm.wpfClient)) {
-      state.ruleForm.wpfClient = [state.ruleForm.wpfClient];
-    }
     state.dialog.show = true;
   });
 };

@@ -22,6 +22,14 @@ use zip::{write::FileOptions, ZipWriter};
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_secs(2);
 
+/// 远程目录扫描结果
+#[derive(serde::Serialize)]
+pub struct RemoteDirectory {
+    pub path: String,
+    pub name: String,
+    pub has_binaries: bool,
+}
+
 /// 智能解码字节流：优先尝试 UTF-8，失败回退到 GBK
 ///
 /// 适配混合服务器场景：
@@ -192,6 +200,697 @@ async fn remote_command(
             Err(e)
         }
     }
+}
+
+/// 扫描远程服务器指定根目录下的一级子目录，并探测是否含可部署二进制。
+///
+/// # Arguments
+/// * `username` / `password` / `server` - SSH 凭据（与 execute_remote_command 一致）
+/// * `server_os` - 服务器系统类型：1=Windows(PowerShell)，2=Docker/Linux(find)
+/// * `scan_root` - 扫描根路径（每服务器独立）
+/// * `exclude_patterns` - 目录名排除列表（精确匹配）
+///
+/// # Returns
+/// * `Ok(Vec<RemoteDirectory>)` 成功
+/// * `Err(String)` 扫描失败（前端走"扫描失败→手动配置"分支）
+#[tauri::command]
+pub async fn scan_server_directories(
+    username: &str,
+    password: &str,
+    server: &str,
+    server_os: i64,
+    scan_root: &str,
+    exclude_patterns: Option<Vec<String>>,
+) -> Result<Vec<RemoteDirectory>, String> {
+    let root = scan_root.trim_end_matches(|c| c == '/' || c == '\\');
+    if root.is_empty() {
+        return Err("扫描根路径不能为空".to_string());
+    }
+    // 先校验路径，禁止换行、分号、命令替换和未转义空白。
+    validate_scan_root(root)?;
+    let excludes = exclude_patterns.unwrap_or_default();
+    if excludes.iter().any(|p| !is_safe_pattern(p)) {
+        return Err("排除规则包含非法字符".to_string());
+    }
+
+    let list_cmd = match server_os {
+        1 => format!("powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; Get-ChildItem -LiteralPath '{}' -Directory | ForEach-Object {{ $_.FullName }}\"", powershell_quote(root)),
+        2 => format!("find {} -maxdepth 1 -mindepth 1 -type d", shell_quote(root)),
+        _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+    };
+    let output = remote_command(username, password, server, &list_cmd).await?;
+
+    let mut result: Vec<RemoteDirectory> = Vec::new();
+    for line in output.lines() {
+        let dir = line.trim();
+        if dir.is_empty() {
+            continue;
+        }
+        let name = match server_os {
+            1 => dir.rsplit(|c| c == '\\' || c == '/').next().unwrap_or("").to_string(),
+            2 => dir.rsplit('/').next().unwrap_or("").to_string(),
+            _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+        };
+        if name.is_empty() || excludes.iter().any(|p| p == &name) {
+            continue;
+        }
+        let probe = match server_os {
+            // 用 -print -quit 而非管道：remote_command 靠 exit_status != 0 判失败，
+            // 加 `| head -1` 会让退出码取自 head 恒为 0，权限错误被静默吞成「无 binaries」，
+            // 下面的降级警告分支将永不触发。-quit 需 GNU findutils，busybox 环境按约定标 blocked。
+            2 => format!("find {} -maxdepth 1 -type f \\( -name '*.dll' -o -name '*.exe' -o -name '*.config' -o -name '*.json' -o -name '*.so' \\) -print -quit", shell_quote(dir)),
+            1 => format!("powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; if (Get-ChildItem -LiteralPath '{}' -File | Where-Object {{ $_.Extension -in '.dll','.exe','.config','.json','.so' }} | Select-Object -First 1) {{ 'hit' }}\"", powershell_quote(dir)),
+            _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+        };
+        // probe 单目录失败时降级（权限受限/路径消失）：将该目录 has_binaries 置 false 并记警告，
+        // 不因单目录错误中断整次扫描（只有根目录列表不可用才返回 Err）
+        let has_binaries = match remote_command(username, password, server, &probe).await {
+            Ok(o) => !o.trim().is_empty(),
+            Err(e) => {
+                eprintln!("警告：探测目录 {} 文件失败（已降级为 has_binaries=false）：{}", dir, e);
+                false
+            }
+        };
+        result.push(RemoteDirectory {
+            path: dir.to_string(),
+            name,
+            has_binaries,
+        });
+    }
+    Ok(result)
+}
+
+/// 远程服务枚举结果
+#[derive(serde::Serialize)]
+pub struct RemoteService {
+    pub name: String,
+    pub display_name: String,
+    pub exec_dir: String,
+    pub source: String,
+    /// 容器全部挂载的宿主机路径（仅 docker 分支非空；不含 exec_dir，供前端候选切换）
+    pub mounts: Vec<String>,
+}
+
+/// 扫描远程服务器服务（Windows 服务 / Linux systemd+docker）
+///
+/// # Arguments
+/// * `username` / `password` / `server` - SSH 凭据
+/// * `server_os` - 服务器系统类型：1=Windows(PowerShell)，2=Linux
+///
+/// # Returns
+/// * `Ok(Vec<RemoteService>)` 成功
+/// * `Err(String)` 失败
+#[tauri::command]
+pub async fn scan_server_services(
+    username: &str,
+    password: &str,
+    server: &str,
+    server_os: i64,
+) -> Result<Vec<RemoteService>, String> {
+    if server_os == 1 {
+        let ps = "powershell -NoProfile -Command \"Get-CimInstance Win32_Service | Select-Object Name,DisplayName,PathName,StartMode | ConvertTo-Json -Compress\"";
+        let output = remote_command(username, password, server, ps).await?;
+        parse_win32_services(&output)
+    } else if server_os == 2 {
+        scan_linux_services(username, password, server).await
+    } else {
+        Err(format!("不支持的服务器系统类型: {}", server_os))
+    }
+}
+
+/// 取可执行文件路径的父目录（去引号/首尾空白），无目录分隔符或父目录为空返回 None
+fn exe_parent_dir(exe: &str) -> Option<String> {
+    let idx = exe.rfind(|c| c == '\\' || c == '/')?;
+    let dir = exe[..idx]
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+    if dir.is_empty() {
+        None
+    } else {
+        Some(dir)
+    }
+}
+
+/// 从命令参数（引号感知分词）中取第一个 .dll 参数的父目录；无 .dll 参数或无分隔符返回 None
+fn dll_arg_parent_dir(args: &str) -> Option<String> {
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut tokens: Vec<String> = Vec::new();
+    for ch in args.chars() {
+        match ch {
+            '"' => in_quote = !in_quote,
+            c if c.is_whitespace() && !in_quote => {
+                if !cur.is_empty() {
+                    tokens.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    let dll = tokens
+        .iter()
+        .find(|t| t.to_ascii_lowercase().ends_with(".dll"))?;
+    exe_parent_dir(dll)
+}
+
+fn parse_win32_services(json: &str) -> Result<Vec<RemoteService>, String> {
+    let trimmed = json.trim();
+    if trimmed.is_empty() {
+        return Ok(vec![]);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("解析服务数据失败: {}", e))?;
+    let items: Vec<&serde_json::Value> = match &value {
+        serde_json::Value::Array(arr) => arr.iter().collect(),
+        serde_json::Value::Object(_) => vec![&value],
+        serde_json::Value::Null => return Ok(vec![]),
+        _ => return Ok(vec![]),
+    };
+    let mut result = Vec::new();
+    for item in items {
+        let name = item
+            .get("Name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        // 禁用（StartMode=Disabled）的服务多为下线实例/系统残留，跳过不参与识别
+        let start_mode = item
+            .get("StartMode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if start_mode.eq_ignore_ascii_case("disabled") {
+            continue;
+        }
+        let display_name = item
+            .get("DisplayName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let display_name = if display_name.is_empty() {
+            name.clone()
+        } else {
+            display_name
+        };
+        let path_name = item
+            .get("PathName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if path_name.is_empty() {
+            continue;
+        }
+        let lower = path_name.to_ascii_lowercase();
+        let Some(pos) = lower.find(".exe") else {
+            continue;
+        };
+        let truncated = &path_name[..pos + 4];
+        let truncated_trimmed = truncated.trim().trim_matches('"').trim();
+        let truncated_trimmed = truncated_trimmed.trim_matches('\'').trim();
+        // dotnet 宿主服务（PathName = ...\dotnet.exe D:\...\App.dll）真实部署目录在 dll 参数里；
+        // 若取 exe 自身目录（C:\Program Files\dotnet）会被前端系统目录过滤整体排除导致漏识别
+        let dir = if truncated_trimmed.to_ascii_lowercase().ends_with("dotnet.exe") {
+            dll_arg_parent_dir(&path_name[pos + 4..]).or_else(|| exe_parent_dir(truncated_trimmed))
+        } else {
+            exe_parent_dir(truncated_trimmed)
+        };
+        let Some(dir) = dir else {
+            continue;
+        };
+        result.push(RemoteService {
+            name: name.clone(),
+            display_name,
+            exec_dir: dir,
+            source: "service".to_string(),
+            mounts: vec![],
+        });
+    }
+    Ok(result)
+}
+
+/// systemd ExecStart → 部署目录：取首个路径 token 的父目录；
+/// dotnet 宿主（ExecStart=/usr/bin/dotnet /opt/app/App.dll）改取首个 .dll 参数父目录，
+/// 否则目录落在 /usr/bin 会被前端系统目录过滤排除。
+fn resolve_linux_exec_dir(exec: &str) -> Option<String> {
+    let mut path_token: Option<String> = None;
+    for token in exec.split_whitespace() {
+        let t = token.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.starts_with('{') || t.starts_with('}') {
+            continue;
+        }
+        let cleaned = t.trim_matches(|c| c == '"' || c == '\'');
+        if cleaned.is_empty() {
+            continue;
+        }
+        if cleaned.starts_with('{') || cleaned.starts_with('}') {
+            continue;
+        }
+        path_token = Some(cleaned.to_string());
+        break;
+    }
+    let pt = path_token?;
+    let pt_trim = pt.trim().trim_matches('"').trim_matches('\'').trim();
+    if pt_trim.is_empty() {
+        return None;
+    }
+    let base_is_dotnet = pt_trim
+        .rsplit('/')
+        .next()
+        .is_some_and(|b| b.eq_ignore_ascii_case("dotnet"));
+    let src: String = if base_is_dotnet {
+        exec.split_whitespace()
+            .map(|t| t.trim_matches(|c| c == '"' || c == '\''))
+            .find(|t| t.to_ascii_lowercase().ends_with(".dll"))
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| pt_trim.to_string())
+    } else {
+        pt_trim.to_string()
+    };
+    let idx = src.rfind('/')?;
+    let dir = src[..idx].trim().to_string();
+    if dir.is_empty() {
+        None
+    } else {
+        Some(dir)
+    }
+}
+
+/// systemd 枚举行解析（unit|exec|enabled）：unit/exec 任一为空跳过；enabled=disabled 的下线单元跳过。
+/// enabled 段缺失（旧格式/查询失败）时不跳过，保持兼容。
+fn parse_systemd_line(line: &str) -> Option<(String, String)> {
+    let mut it = line.splitn(3, '|');
+    let unit = it.next()?.trim();
+    let exec = it.next()?.trim();
+    let enabled = it.next().unwrap_or("").trim();
+    if unit.is_empty() || exec.is_empty() {
+        return None;
+    }
+    if enabled.eq_ignore_ascii_case("disabled") {
+        return None;
+    }
+    Some((unit.to_string(), exec.to_string()))
+}
+
+async fn scan_linux_services(
+    username: &str,
+    password: &str,
+    server: &str,
+) -> Result<Vec<RemoteService>, String> {
+    let systemd_cmd = r#"systemctl list-units --type=service --all --no-pager --plain --no-legend | cut -d' ' -f1 | grep '\.service$' | while read u; do printf '%s|%s|%s\n' "$u" "$(systemctl show "$u" -p ExecStart --value)" "$(systemctl is-enabled "$u" 2>/dev/null)"; done"#;
+    let docker_cmd = "docker inspect -f '{{.Name}}|{{range .Mounts}}{{.Source}}>{{.Destination}};{{end}}' $(docker ps -q)";
+    let mut results: Vec<RemoteService> = Vec::new();
+
+    match remote_command(username, password, server, systemd_cmd).await {
+        Ok(output) => {
+            for line in output.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let Some((unit, exec)) = parse_systemd_line(line) else {
+                    continue;
+                };
+                let Some(dir) = resolve_linux_exec_dir(&exec) else {
+                    continue;
+                };
+                results.push(RemoteService {
+                    name: unit.to_string(),
+                    display_name: unit.to_string(),
+                    exec_dir: dir,
+                    source: "service".to_string(),
+                    mounts: vec![],
+                });
+            }
+        }
+        Err(_) => {
+            // systemd 扫描失败仅跳过，继续尝试 docker（纯 Docker 宿主机无 systemd 时输出为空）
+        }
+    }
+
+    match remote_command(username, password, server, docker_cmd).await {
+        Ok(output) => {
+            for line in output.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let Some((name_part, mounts_part)) = line.split_once('|') else {
+                    continue;
+                };
+                let name = name_part.trim().trim_start_matches('/').trim().to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                // 解析 "source>destination;..." 为挂载对，跳过空项
+                let pairs: Vec<(String, String)> = mounts_part
+                    .split(';')
+                    .filter_map(|m| m.trim().split_once('>'))
+                    .map(|(s, d)| (s.trim().to_string(), d.trim().to_string()))
+                    .filter(|(s, _)| !s.is_empty())
+                    .collect();
+                if pairs.is_empty() {
+                    continue;
+                }
+
+                // 非应用挂载黑名单（Source/Destination 命中任一即排除；子串匹配、忽略大小写）
+                const MOUNT_BLACKLIST: &[&str] = &[
+                    "/usr/share/fonts", "/etc/localtime", "/etc/timezone",
+                    "/etc/hosts", "/etc/resolv.conf", "docker.sock", "cert", "ssl",
+                ];
+                let is_blacklisted = |s: &str, d: &str| {
+                    let sl = s.to_ascii_lowercase();
+                    let dl = d.to_ascii_lowercase();
+                    MOUNT_BLACKLIST.iter().any(|b| sl.contains(b) || dl.contains(b))
+                };
+
+                // 优选：SMOM 部署约定 —— 发布目录挂载的 Destination == "/"+容器名（实测确认，见诊断报告）
+                let name_lower = name.to_ascii_lowercase();
+                let preferred = pairs.iter().find(|(_, d)| {
+                    d.trim_end_matches('/').to_ascii_lowercase() == format!("/{}", name_lower)
+                });
+                // 兜底：黑名单过滤后第一个；全被过滤则取原始第一个（不退化）
+                let exec_dir = preferred
+                    .map(|(s, _)| s.clone())
+                    .or_else(|| pairs.iter().find(|(s, d)| !is_blacklisted(s, d)).map(|(s, _)| s.clone()))
+                    .unwrap_or_else(|| pairs[0].0.clone());
+
+                // 候选：全部 Source，去重、去已选
+                let mut mounts: Vec<String> = Vec::new();
+                for (s, _) in &pairs {
+                    if *s != exec_dir && !mounts.contains(s) {
+                        mounts.push(s.clone());
+                    }
+                }
+                results.push(RemoteService { name: name.clone(), display_name: name, exec_dir, source: "docker".to_string(), mounts });
+            }
+        }
+        Err(_) => {
+            // docker 未安装 / 无权限 / 无运行容器时静默跳过，永不返回 Err
+        }
+    }
+
+    Ok(results)
+}
+
+/// wpfClient 发布目录探测结果行解析：trim、去空行、保序去重
+fn parse_wpf_dir_lines(output: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|x| x == l) {
+            out.push(l.to_string());
+        }
+    }
+    out
+}
+
+/// Linux 端 wpfClient 发布目录探测命令（单次往返）：
+/// 找 Manifest.xml 且同目录存在 *.zip，输出其所在目录。
+/// - 锚点模式：逐锚点 maxdepth 2；
+/// - 全盘模式：maxdepth 5 + 系统/虚拟目录/NFS prune + timeout 60；
+/// - 全模式尾部 `; true` 中和退出码（find 遇权限错误返回 1，remote_command 非 0 即判失败）。
+fn build_wpf_scan_cmd_linux(anchors: &[String], full_scan: bool) -> String {
+    const ZIP_CHECK: &str = " | while IFS= read -r m; do d=$(dirname \"$m\"); z=$(find \"$d\" -maxdepth 1 -name '*.zip' -print -quit 2>/dev/null); [ -n \"$z\" ] && printf '%s\\n' \"$d\"; done; true";
+    if full_scan {
+        format!("timeout 60 find / -maxdepth 5 \\( -path /proc -o -path /sys -o -path /run -o -path /snap -o -path /var/lib/docker -o -fstype nfs \\) -prune -o -name Manifest.xml -print 2>/dev/null{ZIP_CHECK}")
+    } else {
+        let quoted: Vec<String> = anchors.iter().map(|a| shell_quote(a)).collect();
+        format!("for p in {}; do find \"$p\" -maxdepth 2 -name Manifest.xml -print 2>/dev/null; done{ZIP_CHECK}", quoted.join(" "))
+    }
+}
+
+/// Windows 端 wpfClient 发布目录探测命令（单次往返）：
+/// - 锚点模式：Get-ChildItem -Depth 2 -Filter Manifest.xml（-Filter 快于 -Include）；
+/// - 全盘模式：robocopy /L /S /LEV:4（原生速度，避开 WinSxS/Program Files），/XD 排除系统目录；
+/// - 全模式尾部 `exit 0` 中和退出码（robocopy 退出码为位标志 0-7）；
+/// - `-ErrorAction SilentlyContinue`：全盘必撞系统目录 Access Denied，不可沿用 ErrorActionPreference=Stop 模式。
+fn build_wpf_scan_cmd_windows(anchors: &[String], full_scan: bool) -> String {
+    const ZIP_CHECK: &str = " | ForEach-Object { $dir = Split-Path -Parent $_; if (@(Get-ChildItem -Path (Join-Path $dir '*.zip') -File -ErrorAction SilentlyContinue).Count -gt 0) { $dir } }; exit 0";
+    let collect = if full_scan {
+        "foreach ($d in (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -ne $null })) { $r = '{0}:\\' -f $d.Name; $hits += robocopy $r '\\noop' Manifest.xml /L /S /LEV:4 /XD ($r + 'Windows') ($r + '$Recycle.Bin') ($r + 'Program Files') ($r + 'Program Files (x86)') ($r + 'ProgramData') /NJH /NJS /NDL /NC /NS /NP 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -like '*\\Manifest.xml' } }".to_string()
+    } else {
+        let quoted: Vec<String> = anchors
+            .iter()
+            .map(|a| format!("'{}'", powershell_quote(a)))
+            .collect();
+        format!("foreach ($r in @({})) {{ $hits += Get-ChildItem -LiteralPath $r -Recurse -Depth 2 -Filter Manifest.xml -File -ErrorAction SilentlyContinue | ForEach-Object {{ $_.FullName }} }}", quoted.join(", "))
+    };
+    format!("powershell -NoProfile -Command \"$hits = @(); {}; $hits{}\"", collect, ZIP_CHECK)
+}
+
+#[cfg(test)]
+mod wpf_scan_tests {
+    use super::*;
+
+    #[test]
+    fn linux_anchor_cmd_quotes_anchors_and_depth2() {
+        let cmd = build_wpf_scan_cmd_linux(&["/data/app".into(), "/home/u".into()], false);
+        assert!(cmd.starts_with("for p in '/data/app' '/home/u'; do find \"$p\" -maxdepth 2 -name Manifest.xml"));
+        assert!(cmd.ends_with("; true"));
+    }
+
+    #[test]
+    fn linux_anchor_cmd_escapes_single_quote() {
+        let cmd = build_wpf_scan_cmd_linux(&["/data/a'b".into()], false);
+        assert!(cmd.contains("'/data/a'\\''b'"));
+    }
+
+    #[test]
+    fn linux_full_cmd_prunes_systems_and_neutralizes_exit() {
+        let cmd = build_wpf_scan_cmd_linux(&[], true);
+        assert!(cmd.starts_with("timeout 60 find / -maxdepth 5"));
+        for p in ["/proc", "/sys", "/run", "/snap", "/var/lib/docker", "-fstype nfs"] {
+            assert!(cmd.contains(p), "missing prune: {p}");
+        }
+        assert!(cmd.ends_with("; true"));
+    }
+
+    #[test]
+    fn windows_anchor_cmd_uses_gci_depth2_and_exit0() {
+        let cmd = build_wpf_scan_cmd_windows(&["D:\\Smom".into()], false);
+        assert!(cmd.contains("@('D:\\Smom')"));
+        assert!(cmd.contains("-Recurse -Depth 2 -Filter Manifest.xml"));
+        assert!(cmd.ends_with("exit 0\""));
+    }
+
+    #[test]
+    fn windows_full_cmd_uses_robocopy_lev4_and_xd_excludes() {
+        let cmd = build_wpf_scan_cmd_windows(&[], true);
+        assert!(cmd.contains("robocopy"));
+        assert!(cmd.contains("/LEV:4"));
+        for x in ["'Windows'", "'$Recycle.Bin'", "'Program Files'", "'Program Files (x86)'", "'ProgramData'"] {
+            assert!(cmd.contains(x), "missing /XD {x}");
+        }
+        assert!(cmd.ends_with("exit 0\""));
+    }
+
+    #[test]
+    fn parse_wpf_dir_lines_trims_dedupes_drops_empty() {
+        assert_eq!(
+            parse_wpf_dir_lines("\n/data/app/WpfClient\n/data/app/WpfClient\n \nD:\\Smom\\Wpf\n"),
+            vec!["/data/app/WpfClient", "D:\\Smom\\Wpf"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod service_exec_dir_tests {
+    use super::*;
+
+    fn win_service_json(path_name: &str) -> String {
+        // ConvertTo-Json -Compress 单对象输出
+        format!(r#"{{"Name":"SIE.WebApiHost$inst83","DisplayName":"inst83","PathName":"{}"}}"#, path_name.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
+    #[test]
+    fn win_dotnet_hosted_takes_dll_parent_dir() {
+        let out = parse_win32_services(
+            &win_service_json(r#""C:\Program Files\dotnet\dotnet.exe" D:\EIS\SIT\Core83\WebApiHost\SIE.WebApiHost.dll"#),
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].exec_dir, r"D:\EIS\SIT\Core83\WebApiHost");
+    }
+
+    #[test]
+    fn win_dotnet_hosted_without_dll_arg_falls_back_to_exe_dir() {
+        let out = parse_win32_services(
+            &win_service_json(r#""C:\Program Files\dotnet\dotnet.exe""#),
+        )
+        .unwrap();
+        assert_eq!(out[0].exec_dir, r"C:\Program Files\dotnet");
+    }
+
+    #[test]
+    fn win_plain_exe_takes_own_parent_dir() {
+        let out = parse_win32_services(
+            &win_service_json(r#""D:\SMOM8.3\Publish\WebApiHost8031\SIE.WebApiHost.exe" --args"#),
+        )
+        .unwrap();
+        assert_eq!(out[0].exec_dir, r"D:\SMOM8.3\Publish\WebApiHost8031");
+    }
+
+    #[test]
+    fn win_svchost_still_resolves_to_system32() {
+        let out = parse_win32_services(&win_service_json(r"C:\Windows\system32\svchost.exe -k netsvcs")).unwrap();
+        assert_eq!(out[0].exec_dir, r"C:\Windows\system32");
+    }
+
+    #[test]
+    fn linux_plain_exec_takes_parent() {
+        assert_eq!(
+            resolve_linux_exec_dir("/opt/app/svc --flag"),
+            Some("/opt/app".to_string())
+        );
+    }
+
+    #[test]
+    fn linux_dotnet_hosted_takes_dll_parent() {
+        assert_eq!(
+            resolve_linux_exec_dir("/usr/bin/dotnet /opt/app/SIE.WebApiHost.dll"),
+            Some("/opt/app".to_string())
+        );
+    }
+
+    #[test]
+    fn linux_no_separator_returns_none() {
+        assert_eq!(resolve_linux_exec_dir("svc"), None);
+    }
+
+    #[test]
+    fn win_disabled_service_skipped() {
+        let json = r#"{"Name":"SIE.WebApiHost$old_inst","DisplayName":"old","PathName":"D:\\old\\SIE.WebApiHost.exe","StartMode":"Disabled"}"#;
+        assert!(parse_win32_services(json).unwrap().is_empty());
+    }
+
+    #[test]
+    fn win_auto_service_kept() {
+        let json = r#"{"Name":"SIE.WebApiHost$inst83","DisplayName":"inst83","PathName":"D:\\EIS\\Core83\\SIE.WebApiHost.exe","StartMode":"Auto"}"#;
+        let out = parse_win32_services(json).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].exec_dir, r"D:\EIS\Core83");
+    }
+
+    #[test]
+    fn linux_disabled_unit_skipped() {
+        assert_eq!(parse_systemd_line("svc.service|/opt/app/svc|disabled"), None);
+    }
+
+    #[test]
+    fn linux_enabled_unit_parsed_and_missing_state_kept() {
+        assert_eq!(
+            parse_systemd_line("svc.service|/opt/app/svc|enabled"),
+            Some(("svc.service".to_string(), "/opt/app/svc".to_string()))
+        );
+        // enabled 段缺失（旧格式）不跳过
+        assert_eq!(
+            parse_systemd_line("svc.service|/opt/app/svc"),
+            Some(("svc.service".to_string(), "/opt/app/svc".to_string()))
+        );
+    }
+}
+
+/// 扫描远程服务器上的 wpfClient 发布目录（存在 Manifest.xml 且同目录含 *.zip 的目录）
+///
+/// # Arguments
+/// * `username` / `password` / `server` - SSH 凭据（与 scan_server_services 一致）
+/// * `server_os` - 服务器系统类型：1=Windows，2=Linux
+/// * `anchors` - 锚点根目录列表（锚点模式）；全盘模式下忽略
+/// * `full_scan` - true 时全盘扫描（用户手动触发的深度扫描，禁止自动调用）
+///
+/// # Returns
+/// * `Ok(Vec<String>)` 命中目录列表（已 trim 去重）；无命中返回空 Vec
+/// * `Err(String)` 扫描失败
+#[tauri::command]
+pub async fn scan_wpf_publish_dirs(
+    username: &str,
+    password: &str,
+    server: &str,
+    server_os: i64,
+    anchors: Vec<String>,
+    full_scan: bool,
+) -> Result<Vec<String>, String> {
+    if !full_scan && anchors.is_empty() {
+        return Err("锚点为空且未开启全盘扫描".to_string());
+    }
+    if anchors.iter().any(|a| a.chars().any(|c| c == '\r' || c == '\n')) {
+        return Err("锚点路径包含非法字符".to_string());
+    }
+    let cmd = match server_os {
+        1 => build_wpf_scan_cmd_windows(&anchors, full_scan),
+        2 => build_wpf_scan_cmd_linux(&anchors, full_scan),
+        _ => return Err(format!("暂不支持服务器系统类型：{}", server_os)),
+    };
+    let output = remote_command(username, password, server, &cmd).await?;
+    Ok(parse_wpf_dir_lines(&output))
+}
+
+/// 健康检查：对指定 URL 发起 GET，2xx 视为健康。
+///
+/// # Arguments
+/// * `check_url` - 健康检查 URL（手动配置）
+/// * `timeout_sec` - 超时秒数
+///
+/// # Returns
+/// * `Ok("healthy")` 成功
+/// * `Err("unhealthy: ..." / "健康检查请求失败：..." / "健康检查超时时间必须大于 0")` 失败
+#[tauri::command]
+pub async fn check_service_health(check_url: String, timeout_sec: i64) -> Result<String, String> {
+    if timeout_sec <= 0 {
+        return Err("健康检查超时时间必须大于 0".to_string());
+    }
+    let dur = std::time::Duration::from_secs(timeout_sec as u64);
+    let client = reqwest::Client::builder()
+        .timeout(dur)
+        .build()
+        .map_err(|e| format!("构建 HTTP 客户端失败：{}", e))?;
+    let resp = client
+        .get(&check_url)
+        .send()
+        .await
+        .map_err(|e| format!("健康检查请求失败：{}", e))?;
+    if resp.status().is_success() {
+        Ok("healthy".to_string())
+    } else {
+        Err(format!("unhealthy: HTTP {}", resp.status()))
+    }
+}
+
+fn validate_scan_root(root: &str) -> Result<(), String> {
+    if root.is_empty() || root.chars().any(|c| c == '\r' || c == '\n' || c == ';' || c == '`' || c == '$' || c == '"') {
+        return Err("扫描根路径包含非法字符".to_string());
+    }
+    Ok(())
+}
+
+fn is_safe_pattern(pattern: &str) -> bool {
+    !pattern.is_empty() && !pattern.chars().any(|c| c == '\r' || c == '\n' || c == ';' || c == '`' || c == '$' || c == '"')
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn powershell_quote(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 /// 使某个 SSH 连接池中的会话失效（切换项目后调用）
@@ -1140,10 +1839,17 @@ pub async fn upload_server_files(
     username: &str,
     password: &str,
     server: &str,
+    retry_count: Option<u32>,
+    retry_interval_secs: Option<u64>,
 ) -> Result<bool, String> {
+    let max_attempts = retry_count.unwrap_or(MAX_RETRIES).max(1);
+    let delay = retry_interval_secs
+        .filter(|s| *s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(RETRY_DELAY);
     let mut attempts = 0;
     let mut err_msg = String::new();
-    while attempts < MAX_RETRIES {
+    while attempts < max_attempts {
         match exec_upload_server_files(
             remote_paths.clone(),
             local_paths.clone(),
@@ -1157,7 +1863,9 @@ pub async fn upload_server_files(
             Err(e) => {
                 eprintln!("尝试 {} 失败: {}，正在重试...", attempts + 1, e);
                 attempts += 1;
-                thread::sleep(RETRY_DELAY);
+                if attempts < max_attempts {
+                    thread::sleep(delay);
+                }
                 err_msg = e.to_string();
             }
         }
@@ -1928,4 +2636,147 @@ pub async fn read_dlls_by_name(dir: &str, patterns: &str) -> Result<Vec<String>,
         }
     }
     Ok(dll_files)
+}
+
+/// 按精确文件名清单从源目录复制 DLL 到目标目录（合并模式，不删目标）
+///
+/// # 参数
+/// - `source` - 源目录
+/// - `file_names` - 要复制的文件名清单（仅文件名，含 .dll 后缀）
+/// - `destination` - 目标目录
+///
+/// # 返回值
+/// - `Ok(u32)` 成功复制的文件数；源中不存在的名字跳过不报错
+/// - `Err(String)` 失败（如源目录不存在或目标目录创建失败）
+#[tauri::command]
+pub async fn copy_dll_files_by_names(
+    source: &str,
+    file_names: Vec<String>,
+    destination: &str,
+) -> Result<u32, String> {
+    let src_dir = Path::new(source);
+    let dst_dir = Path::new(destination);
+
+    if !src_dir.exists() {
+        return Err(format!("源目录不存在: {}", source));
+    }
+
+    // 创建目标目录（不删除既有内容）
+    fs::create_dir_all(dst_dir).map_err(|e| format!("无法创建目标目录 {:?}: {}", dst_dir, e))?;
+
+    let mut copied: u32 = 0;
+    for name in file_names {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // 仅处理 .dll 后缀（不区分大小写），与既有命令一致
+        if !trimmed.to_lowercase().ends_with(".dll") {
+            continue;
+        }
+        // 防止路径穿越：只取文件名部分
+        let file_name = Path::new(trimmed)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(trimmed);
+        let src_file = src_dir.join(file_name);
+        if !src_file.is_file() {
+            continue;
+        }
+        let dst_file = dst_dir.join(file_name);
+        fs::copy(&src_file, &dst_file)
+            .map_err(|e| format!("复制文件 {:?} 到 {:?} 失败: {}", src_file, dst_file, e))?;
+        copied += 1;
+    }
+
+    Ok(copied)
+}
+
+#[cfg(test)]
+mod copy_dll_files_by_names_tests {
+    use super::*;
+    use std::fs;
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        p.push(format!("{}_{}_{}", prefix, std::process::id(), nanos));
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[tokio::test]
+    async fn copy_by_names_copies_exact_and_skips_missing() {
+        let src = unique_temp_dir("copy_by_names_src");
+        let dst = unique_temp_dir("copy_by_names_dst");
+
+        // 建 3 个 dll + 1 个非 dll
+        for name in ["a.dll", "b.dll", "c.dll", "readme.txt"] {
+            fs::write(src.join(name), format!("content-{}", name)).unwrap();
+        }
+
+        // 按名复制 2 个，断言目标只有 2 个且计数为 2
+        let count = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["a.dll".into(), "b.dll".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
+        let mut files: Vec<String> = fs::read_dir(&dst)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        files.sort();
+        assert_eq!(files, vec!["a.dll", "b.dll"]);
+
+        // 传入不存在名字断言跳过不报错，计数为 0
+        let count2 = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["not_exist.dll".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count2, 0);
+
+        // 非 dll 应被跳过
+        let count3 = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["readme.txt".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count3, 0);
+
+        // 清理
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dst);
+    }
+
+    #[tokio::test]
+    async fn copy_by_names_case_insensitive_extension() {
+        let src = unique_temp_dir("copy_by_names_case_src");
+        let dst = unique_temp_dir("copy_by_names_case_dst");
+
+        fs::write(src.join("Mixed.DLL"), "x").unwrap();
+
+        let count = copy_dll_files_by_names(
+            src.to_str().unwrap(),
+            vec!["Mixed.DLL".into()],
+            dst.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dst);
+    }
 }
