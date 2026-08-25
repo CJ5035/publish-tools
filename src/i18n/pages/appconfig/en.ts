@@ -4,6 +4,8 @@ export default {
       open: 'Wizard',
       title: 'Configuration Wizard',
       cancel: 'Cancel',
+      restart: 'Restart',
+      restartMsg: 'Discard current progress and start over?',
       cancelConfirmTitle: 'Abandon Setup?',
       prev: 'Previous',
       next: 'Next',

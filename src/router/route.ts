@@ -97,7 +97,7 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 				path: '/config',
 				name: 'config',
 				component: () => import("@/layout/routerView/parent.vue"),
-				redirect: "/project",
+				redirect: "/wizard",
 				meta: {
 					title: 'message.router.config',
 					isLink: '',
@@ -108,6 +108,22 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 					icon: 'ele-Tools'
 				},
 				children: [
+					{
+						path: '/wizard',
+						name: 'wizard',
+						component: () => import('@/views/wizard/index.vue'),
+						meta: {
+							title: 'message.router.wizard',
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'ele-MagicStick'
+						},
+						redirect: '',
+						children: []
+					},
 					{
 						path: '/project',
 						name: 'project',

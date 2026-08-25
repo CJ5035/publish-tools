@@ -4,6 +4,8 @@ export default {
       open: '配置嚮導',
       title: '配置嚮導',
       cancel: '取消',
+      restart: '重新開始',
+      restartMsg: '確定放棄當前進度並重新開始配置嗎？',
       cancelConfirmTitle: '放棄配置？',
       prev: '上一步',
       next: '下一步',

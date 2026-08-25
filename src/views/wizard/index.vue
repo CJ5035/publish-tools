@@ -1,47 +1,50 @@
 <template>
-  <el-dialog v-model="visible" fullscreen :close-on-click-modal="false" :show-close="false" width="100%">
-    <template #header>
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span>{{ t('message.appconfig.wizard.title') }}</span>
-        <el-button @click="onCancel">{{ t('message.appconfig.wizard.cancel') }}</el-button>
+  <div class="wizard-container layout-padding">
+    <el-card shadow="hover" class="layout-padding-auto">
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span>{{ t('message.appconfig.wizard.title') }}</span>
+          <el-button @click="onRestart">{{ t('message.appconfig.wizard.restart') }}</el-button>
+        </div>
+      </template>
+
+      <el-steps :active="stepIndex" finish-status="success" style="margin-bottom:20px;">
+        <el-step :title="t('message.appconfig.wizard.steps.project')" />
+        <el-step :title="t('message.appconfig.wizard.steps.servers')" />
+        <el-step :title="t('message.appconfig.wizard.steps.identify')" />
+        <el-step :title="envStepTitle" />
+      </el-steps>
+
+      <div v-if="isSummary">
+        <h3>{{ t('message.appconfig.wizard.summaryDone') }}</h3>
+        <el-table :data="summaryRows" style="width:100%">
+          <el-table-column prop="env" :label="t('message.appconfig.wizard.colEnv')" />
+          <el-table-column prop="status" :label="t('message.appconfig.wizard.colStatus')" />
+          <el-table-column prop="msg" :label="t('message.appconfig.wizard.colMsg')" />
+        </el-table>
+        <div style="margin-top:16px;text-align:right;">
+          <el-button type="primary" @click="onFinish">{{ t('message.appconfig.wizard.finish') }}</el-button>
+        </div>
       </div>
-    </template>
 
-    <el-steps :active="stepIndex" finish-status="success" style="margin-bottom:20px;">
-      <el-step :title="t('message.appconfig.wizard.steps.project')" />
-      <el-step :title="t('message.appconfig.wizard.steps.servers')" />
-      <el-step :title="t('message.appconfig.wizard.steps.identify')" />
-      <el-step :title="envStepTitle" />
-    </el-steps>
+      <template v-else>
+        <Step1Project v-if="stepIndex===0" ref="s1Ref" />
+        <Step2Servers v-else-if="stepIndex===1" ref="s2Ref" />
+        <Step3Identify v-else-if="stepIndex===2" ref="s3Ref" />
+        <Step4EnvConfig v-else-if="stepIndex===3" ref="s4eRef" :current-env="currentEnv" @switch-env="onSwitchEnv" @submitted="onEnvSubmitted" />
 
-    <div v-if="isSummary">
-      <h3>{{ t('message.appconfig.wizard.summaryDone') }}</h3>
-      <el-table :data="summaryRows" style="width:100%">
-        <el-table-column prop="env" :label="t('message.appconfig.wizard.colEnv')" />
-        <el-table-column prop="status" :label="t('message.appconfig.wizard.colStatus')" />
-        <el-table-column prop="msg" :label="t('message.appconfig.wizard.colMsg')" />
-      </el-table>
-      <div style="margin-top:16px;text-align:right;">
-        <el-button type="primary" @click="onFinish">{{ t('message.appconfig.wizard.finish') }}</el-button>
-      </div>
-    </div>
-
-    <template v-else>
-      <Step1Project v-if="stepIndex===0" ref="s1Ref" />
-      <Step2Servers v-else-if="stepIndex===1" ref="s2Ref" />
-      <Step3Identify v-else-if="stepIndex===2" ref="s3Ref" />
-      <Step4EnvConfig v-else-if="stepIndex===3" ref="s4eRef" :current-env="currentEnv" @switch-env="onSwitchEnv" @submitted="onEnvSubmitted" />
-
-      <div style="margin-top:20px;text-align:right;">
-        <el-button @click="onPrev" :disabled="stepIndex===0">{{ t('message.appconfig.wizard.prev') }}</el-button>
-        <el-button v-if="stepIndex!==3" type="primary" @click="onNext">{{ t('message.appconfig.wizard.next') }}</el-button>
-      </div>
-    </template>
-  </el-dialog>
+        <div style="margin-top:20px;text-align:right;">
+          <el-button @click="onPrev" :disabled="stepIndex===0">{{ t('message.appconfig.wizard.prev') }}</el-button>
+          <el-button v-if="stepIndex!==3" type="primary" @click="onNext">{{ t('message.appconfig.wizard.next') }}</el-button>
+        </div>
+      </template>
+    </el-card>
+  </div>
 </template>
 
-<script setup lang="ts">
-import { ref, computed, provide, reactive } from 'vue';
+<script setup lang="ts" name="wizard">
+import { ref, computed, provide, reactive, onMounted, onDeactivated } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { Local } from '@/utils/storage';
@@ -52,10 +55,9 @@ import Step2Servers from './Step2Servers.vue';
 import Step3Identify from './Step3Identify.vue';
 import Step4EnvConfig from './Step4EnvConfig.vue';
 
-const emit = defineEmits<{ (e: 'refresh'): void }>();
+const router = useRouter();
 const { t } = useI18n();
 
-const visible = ref(false);
 const stepIndex = ref(0);
 const currentEnvIndex = ref(0);
 const isSummary = ref(false);
@@ -86,6 +88,15 @@ function clearDraft() {
   try { Local.remove(DRAFT_KEY); } catch {}
 }
 
+function resetToStart() {
+  clearDraft();
+  Object.assign(draft, createEmptyDraft());
+  stepIndex.value = 0;
+  currentEnvIndex.value = 0;
+  isSummary.value = false;
+  summaryRows.value = [];
+}
+
 const envStepTitle = computed(() => draft.envs.length ? `${t('message.appconfig.wizard.stepsEnv')} (${displayEnv(currentEnv.value)})` : t('message.appconfig.wizard.stepsEnv'));
 
 const s1Ref = ref<any>(null);
@@ -98,38 +109,34 @@ function currentValidateRef(): any {
   return map[stepIndex.value];
 }
 
-async function open() {
+// 恢复草稿：仅在真实挂载时执行（冷加载 / tagsView 页签被关闭后重开），keep-alive 页签切换不触发
+onMounted(async () => {
   let stored: StoredWizardDraft | null = null;
   try { stored = restoreDraft(Local.get(DRAFT_KEY)); } catch { stored = null; }
-  if (stored) {
-    try {
-      await ElMessageBox.confirm(
-        t('message.appconfig.wizard.resumeMsg', { time: new Date(stored.savedAt).toLocaleString() }),
-        t('message.appconfig.wizard.resumeTitle'),
-        {
-          type: 'info',
-          confirmButtonText: t('message.appconfig.wizard.resumeOk'),
-          cancelButtonText: t('message.appconfig.wizard.resumeRestart'),
-        }
-      );
-      Object.assign(draft, stored.draft);
-      stepIndex.value = Math.min(Math.max(stored.stepIndex ?? 0, 0), 3);
-      currentEnvIndex.value = stored.currentEnvIndex;
-      isSummary.value = stored.isSummary;
-      summaryRows.value = stored.summaryRows ?? [];
-      visible.value = true;
-      return;
-    } catch {
-      clearDraft();
-    }
+  if (!stored) return;
+  try {
+    await ElMessageBox.confirm(
+      t('message.appconfig.wizard.resumeMsg', { time: new Date(stored.savedAt).toLocaleString() }),
+      t('message.appconfig.wizard.resumeTitle'),
+      {
+        type: 'info',
+        confirmButtonText: t('message.appconfig.wizard.resumeOk'),
+        cancelButtonText: t('message.appconfig.wizard.resumeRestart'),
+      }
+    );
+    Object.assign(draft, stored.draft);
+    stepIndex.value = Math.min(Math.max(stored.stepIndex ?? 0, 0), 3);
+    currentEnvIndex.value = stored.currentEnvIndex;
+    isSummary.value = stored.isSummary;
+    summaryRows.value = stored.summaryRows ?? [];
+  } catch {
+    clearDraft();
   }
-  Object.assign(draft, createEmptyDraft());
-  stepIndex.value = 0;
-  currentEnvIndex.value = 0;
-  isSummary.value = false;
-  summaryRows.value = [];
-  visible.value = true;
-}
+});
+
+// 任何方式离开页面（切菜单 / 关 tagsView 页签）前静默落一次草稿，
+// 闭合"persistDraft 只在步骤切换时触发、填一半切走导致 localStorage 滞后"的缺口
+onDeactivated(() => persistDraft());
 
 async function onNext() {
   const v = currentValidateRef();
@@ -174,31 +181,25 @@ function onEnvSubmitted(p: { env: number; mode: 'insert' | 'update' }) {
   persistDraft();
 }
 
-async function onCancel() {
-  if (!hasProgress.value) { visible.value = false; return; }
+// 页面形态无需"退出"，提供"重新开始"（清草稿回到第 1 步）
+async function onRestart() {
+  if (!hasProgress.value) { resetToStart(); return; }
   try {
     await ElMessageBox.confirm(
-      t('message.appconfig.wizard.cancelExitMsg'),
+      t('message.appconfig.wizard.restartMsg'),
       t('message.appconfig.wizard.cancelConfirmTitle'),
       {
         type: 'warning',
-        distinguishCancelAndClose: true,
-        confirmButtonText: t('message.appconfig.wizard.cancelSaveExit'),
-        cancelButtonText: t('message.appconfig.wizard.cancelAbandon'),
+        confirmButtonText: t('message.appconfig.wizard.restart'),
+        cancelButtonText: t('message.appconfig.wizard.cancel'),
       }
     );
-    persistDraft();
-    visible.value = false;
-  } catch (action) {
-    if (action === 'cancel') { clearDraft(); visible.value = false; }
-  }
+    resetToStart();
+  } catch {}
 }
 
 function onFinish() {
-  clearDraft();
-  visible.value = false;
-  emit('refresh');
+  resetToStart();
+  router.push('/appconfig');
 }
-
-defineExpose({ open });
 </script>

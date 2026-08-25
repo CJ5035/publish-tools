@@ -7,6 +7,7 @@ export default {
 		config: '配置',
 		projectManage: '项目管理',
 		appconfig: '应用配置',
+		wizard: '配置向导',
 		server: '服务器',
 		sshInstall: 'SSH安装说明',
 		backups: '备份记录',
