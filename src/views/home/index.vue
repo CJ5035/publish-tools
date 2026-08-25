@@ -662,6 +662,7 @@ import { createDeployRecorder } from "@/utils/deployTaskRecorder";
 import { classifyWpfDlls } from "@/utils/wpfDllClassify";
 import {
   APP_TYPE_ORDER,
+  filterAppconfigForDialog,
   isTypeActive,
   type AppTypeKey,
   type PublishStatusMap,
@@ -1135,7 +1136,11 @@ const onGeneratePublish = async () => {
   // );
   // if (appConfigResult.code !== 0) return;
   // generatePublishDialogRef.value.openDialog("edit", appConfigResult.data.data);
-  generatePublishDialogRef.value.openDialog("edit", state.publishData.appconfigData);
+  // 已发布类型传过滤副本（clientPath 置空），保持对话框"已发布类型不出现"的原显隐行为
+  generatePublishDialogRef.value.openDialog(
+    "edit",
+    filterAppconfigForDialog(state.publishData.appconfigData, publishStatus)
+  );
 };
 
 // 发布前备份
