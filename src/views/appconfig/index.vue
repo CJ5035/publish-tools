@@ -178,7 +178,7 @@ const BackupDialog = defineAsyncComponent(
 );
 const wizardRef = ref();
 const ProjectWizard = defineAsyncComponent(
-  () => import("@/views/appconfig/components/projectWizard/index.vue")
+  () => import("@/views/wizard/index.vue")
 );
 
 // 项目信息
