@@ -74,13 +74,10 @@
                 </el-col>
               </el-row>
 
-              <div class="card-item-env">
+              <div class="card-item-env" v-if="envOptions.length > 0">
                 <el-radio-group size="default" @change="onEnvironmentChange" v-model="state.publishData.environment"
                   :disabled="state.funModule[currModuleIndex].loading == true">
-                  <el-radio border :value="1">Dev</el-radio>
-                  <el-radio border :value="2">Uat</el-radio>
-                  <el-radio border :value="3">Pro</el-radio>
-                  <el-radio border :value="4">Other</el-radio>
+                  <el-radio v-for="env in envOptions" :key="env.value" border :value="env.value">{{ env.label }}</el-radio>
                 </el-radio-group>
               </div>
 
@@ -238,7 +235,13 @@
                 </el-collapse-item>
               </el-collapse>
 
-              <el-empty description="无应用配置信息." v-show="showEmptyAppConfig" :image-size="150" />
+              <el-empty v-if="!state.publishData.projectId" description="请先选择要发布的项目" :image-size="150" />
+              <el-empty v-else-if="availableEnvironments.length > 0" description="无应用配置信息."
+                v-show="showEmptyAppConfig" :image-size="150" />
+              <el-empty v-else description="该项目尚未配置任何发布环境" :image-size="150">
+                <el-button type="primary" @click="router.push('/wizard')">打开配置向导</el-button>
+                <el-button @click="router.push('/appconfig')">前往应用配置</el-button>
+              </el-empty>
             </div>
           </div>
         </div>
@@ -297,6 +300,7 @@ import {
 import { ElMessage } from "element-plus";
 import _ from "lodash";
 import { Refresh, CircleClose, EditPen, QuestionFilled, VideoPause, VideoPlay, Close } from "@element-plus/icons-vue";
+import { useRouter } from "vue-router";
 import { useProjectDb } from "@/database/project/index";
 import { useAppconfigDb } from "@/database/appconfig/index";
 import { useServerDb } from "@/database/servers/index";
@@ -380,6 +384,25 @@ const ScheduledPublishDialog = defineAsyncComponent(
 const projectList = ref<RowProjectType[]>();
 const isRefreshingProjectDefault = ref(false);
 const showEmptyAppConfig = ref(false);
+// 环境显隐：仅展示当前项目已配置的环境（探测结果复用，替代 onProjectChange/getProjectDefault 里的重复循环）
+const ENV_LABELS: ReadonlyArray<{ value: number; label: string }> = [
+  { value: 1, label: "Dev" },
+  { value: 2, label: "Uat" },
+  { value: 3, label: "Pro" },
+  { value: 4, label: "Other" },
+];
+const availableEnvironments = ref<number[]>([]);
+const envOptions = computed(() => ENV_LABELS.filter((e) => availableEnvironments.value.includes(e.value)));
+
+const queryAvailableEnvironments = async (projectId: number): Promise<number[]> => {
+  const envs: number[] = [];
+  for (let env = 1; env <= 4; env++) {
+    const result = await appconfigDb.getPublishAppconfigs(projectId, env);
+    if (result.code === 0 && result.data.data && result.data.data.id) envs.push(env);
+  }
+  return envs;
+};
+const router = useRouter();
 const webApiHostName = ref("WebApiHost");
 const scheduleServerName = ref("ScheduleServer");
 const webClientName = ref("WebClient");
@@ -3464,36 +3487,31 @@ const getProjectDefault = async (options?: { keepCurrentEnvironment?: boolean })
         : "";
 
       // 查询该项目有哪些环境配置
-      const appconfigDb = useAppconfigDb();
-      let availableEnvironments: number[] = [];
-      for (let env = 1; env <= 4; env++) {
-        const result = await appconfigDb.getPublishAppconfigs(projectId, env);
-        if (result.code === 0 && result.data.data && result.data.data.id) {
-          availableEnvironments.push(env);
-        }
-      }
+      const detected = await queryAvailableEnvironments(projectId);
+      availableEnvironments.value = detected;
+      const detectedEnvironments = detected;
 
-      console.log('  - 可用环境配置:', availableEnvironments);
+      console.log('  - 可用环境配置:', detectedEnvironments);
 
       // 决定使用哪个环境
       let targetEnvironment = 1; // 默认 Dev
       const currentEnvironment = state.publishData.environment;
 
-      if (options?.keepCurrentEnvironment && availableEnvironments.includes(currentEnvironment)) {
+      if (options?.keepCurrentEnvironment && detectedEnvironments.includes(currentEnvironment)) {
         targetEnvironment = currentEnvironment;
         console.log('  >>> 保持当前环境:', currentEnvironment);
       } else {
         // 1. 先尝试恢复 localStorage 中保存的环境
         const savedEnvironment = restoreEnvironmentFromStorage(projectId);
-        if (savedEnvironment && availableEnvironments.includes(savedEnvironment)) {
+        if (savedEnvironment && detectedEnvironments.includes(savedEnvironment)) {
           // 保存的环境存在且有配置
           targetEnvironment = savedEnvironment;
           console.log('  >>> 恢复保存的环境:', savedEnvironment);
-        } else if (availableEnvironments.length > 0) {
+        } else if (detectedEnvironments.length > 0) {
           // 2. 如果保存的环境不可用，找第一个有配置的环境
           // 优先级：Dev(1) > Uat(2) > Pro(3) > Other(4)
-          availableEnvironments.sort((a, b) => a - b);
-          targetEnvironment = availableEnvironments[0];
+          detectedEnvironments.sort((a, b) => a - b);
+          targetEnvironment = detectedEnvironments[0];
           console.log('  >>> 保存的环境不可用，使用第一个有配置的环境:', targetEnvironment);
         } else {
           console.log('  >>> 该项目没有任何环境配置，使用默认 Dev');
@@ -3609,21 +3627,16 @@ const onProjectChange = async (val: number) => {
       : "";
 
     // 从数据库查该项目有哪些环境有配置
-    let availableEnvironments: number[] = [];
-    for (let env = 1; env <= 4; env++) {
-      const result = await appconfigDb.getPublishAppconfigs(val, env);
-      if (result.code === 0 && result.data.data && result.data.data.id) {
-        availableEnvironments.push(env);
-      }
-    }
+    const detectedEnvironments = await queryAvailableEnvironments(val);
+    availableEnvironments.value = detectedEnvironments;
 
     // 恢复环境：优先用缓存（需有对应配置），否则取第一个有配置的环境
     const savedEnvironment = restoreEnvironmentFromStorage(val);
-    if (savedEnvironment && availableEnvironments.includes(savedEnvironment)) {
+    if (savedEnvironment && detectedEnvironments.includes(savedEnvironment)) {
       state.publishData.environment = savedEnvironment;
-    } else if (availableEnvironments.length > 0) {
-      availableEnvironments.sort((a, b) => a - b);
-      state.publishData.environment = availableEnvironments[0];
+    } else if (detectedEnvironments.length > 0) {
+      detectedEnvironments.sort((a, b) => a - b);
+      state.publishData.environment = detectedEnvironments[0];
     } else {
       state.publishData.environment = 1;
     }
