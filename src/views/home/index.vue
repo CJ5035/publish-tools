@@ -622,8 +622,18 @@ const onFunModuleHandle = async (index: number) => {
   state.funModule[origIndex].loading = true;
   // loading 复位收口到 finally：任一 await 抛异常（如编译项目/获取程序集无 try/catch 分支）
   // 都必须复位，否则 uiLocked 的 .some(m => m.loading) 会永久锁死整页
+  // §4.4 第3条：一键/手动发布与同项目同环境的定时任务共用全局互斥表；heldKey 非空才在 finally 释放
+  let heldKey: { projectId: number | null; environment: number | null } | null = null;
   try {
     currModuleIndex.value = origIndex;
+    if (title === "一键发布" || title === "手动发布") {
+      const { projectId, environment } = state.publishData;
+      if (!schedulerStore.tryLock(projectId, environment)) {
+        printInfoLog("当前项目该环境已有发布任务执行中，请稍后再试。", "log-warning");
+        return;
+      }
+      heldKey = { projectId, environment };
+    }
     const ctx = await buildManualCtx();
     initLogs(ctx);
     if (title === "一键发布" || title === "获取程序集" || title === "手动发布") {
@@ -668,6 +678,7 @@ const onFunModuleHandle = async (index: number) => {
     printInfoLog("");
     printInfoLog(generatePublishLog.value.logs, "log-info");
   } finally {
+    if (heldKey) schedulerStore.release(heldKey.projectId, heldKey.environment);
     state.funModule[origIndex].loading = false;
   }
   generatePublishLog.value.data = "";

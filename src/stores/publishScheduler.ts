@@ -33,8 +33,24 @@ export const usePublishSchedulerStore = defineStore("publishScheduler", () => {
 
   const getTaskLogs = (scheduleId: number) => runningTasks.get(scheduleId)?.logs.logs.value ?? [];
 
+  // 手动发布与定时任务共用同一张互斥表（§4.4 第3条）：manual 占用时 value 用 -1（无 scheduleId）
+  const tryLock = (projectId: number | null, environment: number | null): boolean => {
+    const key = buildScheduleMutexKey(projectId, environment);
+    if (runningKeys.has(key)) return false;
+    runningKeys.set(key, -1);
+    return true;
+  };
+  const release = (projectId: number | null, environment: number | null) => {
+    runningKeys.delete(buildScheduleMutexKey(projectId, environment));
+  };
+
   const start = () => {
     if (timer.value) return;
+    // 应用重启清扫：崩溃/强退后遗留的 executing 行永远不会被推进，首次 tick 前一次性标记失败（fire-and-forget）
+    void publishScheduleDb.getExecutingSchedules().then((r) => {
+      if (r.code !== 0) return;
+      r.data.forEach((sch) => void publishScheduleDb.updateScheduleStatus(sch.id, "failed", "应用重启导致任务中断"));
+    });
     timer.value = setInterval(() => void tick(), 30000);
     void tick();
   };
@@ -67,6 +83,8 @@ export const usePublishSchedulerStore = defineStore("publishScheduler", () => {
       return;
     }
     runningKeys.set(key, sch.id);
+    // 尽早落库 executing：关闭跨 tick 重复拾取窗口（后续配置解析等 await 期间行状态已可见）
+    await publishScheduleDb.updateScheduleStatus(sch.id, "executing");
 
     // 独立 ctx：配置快照 + 独立日志缓冲 + 固定默认发布日志设置（行为差异 D1）
     const logger = createLogStoreForScheduler();
@@ -92,7 +110,6 @@ export const usePublishSchedulerStore = defineStore("publishScheduler", () => {
         generatePublishLog: createGeneratePublishLogState(),
         deployRecorder: null,
       };
-      await publishScheduleDb.updateScheduleStatus(sch.id, "executing");
       logger.print(`定时发布任务开始执行：${sch.publishType}`);
       if (sch.publishType === "一键发布") success = await oneClickPublishing(ctx);
       else if (sch.publishType === "手动发布") success = await projectPublish(ctx);
@@ -115,5 +132,5 @@ export const usePublishSchedulerStore = defineStore("publishScheduler", () => {
     }
   };
 
-  return { start, runningCount, getTaskLogs, runningTasks };
+  return { start, runningCount, getTaskLogs, runningTasks, tryLock, release };
 });
