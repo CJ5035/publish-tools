@@ -1,5 +1,21 @@
 import { db } from '@/database/sqlite';
 
+/** env_tags 列序列化：number[] → JSON 字符串（如 "[1,3]"）；空/缺省 → null（未指定） */
+const envTagsToDb = (tags?: number[] | null): string | null =>
+    tags && tags.length > 0 ? JSON.stringify(tags) : null;
+
+/** env_tags 列反序列化：容错（非法 JSON / 非数组 → null） */
+const envTagsFromDb = (v: unknown): number[] | null => {
+    if (Array.isArray(v)) return v as number[];
+    if (typeof v === 'string' && v.trim()) {
+        try {
+            const a = JSON.parse(v);
+            return Array.isArray(a) ? a.map(Number).filter((x) => !Number.isNaN(x)) : null;
+        } catch { return null; }
+    }
+    return null;
+};
+
 export function useServerDb() {
     return {
         /**
@@ -8,7 +24,7 @@ export function useServerDb() {
          * @returns { any }
          */
         getServerList: async (params: GetServerTableParams) => {
-            let dataSql = "select ts.id, ts.project_id projectId, tp.name projectName, ts.name, ts.os, ts.ip, ts.port, ts.account, ts.pwd, ts.description from t_server ts left join t_project tp on ts.project_id = tp.id";
+            let dataSql = "select ts.id, ts.project_id projectId, tp.name projectName, ts.name, ts.os, ts.ip, ts.port, ts.account, ts.pwd, ts.description, ts.env_tags envTags from t_server ts left join t_project tp on ts.project_id = tp.id";
             let totalSql = "select count(*) totalCount from t_server ts";
             let where = " where 1=1 ";
             let orderBy = "";
@@ -37,8 +53,8 @@ export function useServerDb() {
                 let totalData = await (await db()).select<any>(totalSql, bindValues);
                 if (!totalData || totalData.length < 1 || totalData[0].totalCount < 1) return dataResult;
                 dataResult.data.total = totalData[0].totalCount;
-                // 查询数据
-                dataResult.data.data = await (await db()).select<RowServerType[]>(dataSql, bindValues);
+                // 查询数据（env_tags JSON 列反序列化为数组）
+                dataResult.data.data = (await (await db()).select<any[]>(dataSql, bindValues)).map((x) => ({ ...x, envTags: envTagsFromDb(x.envTags) }));
                 dataResult.msg = "查询服务器(分页)列表信息成功";
             } catch (error) {
                 dataResult.code = -1;
@@ -54,7 +70,7 @@ export function useServerDb() {
          * @returns { any }
          */
         getServerById: async (id: number) => {
-            let dataSql = "select ts.id, ts.project_id projectId, tp.name projectName, ts.name, ts.os, ts.ip, ts.port, ts.account, ts.pwd, ts.description from t_server ts left join t_project tp on ts.project_id = tp.id where ts.id = $1";
+            let dataSql = "select ts.id, ts.project_id projectId, tp.name projectName, ts.name, ts.os, ts.ip, ts.port, ts.account, ts.pwd, ts.description, ts.env_tags envTags from t_server ts left join t_project tp on ts.project_id = tp.id where ts.id = $1";
 
             // 定义(默认)响应结果
             let dataResult: DataResultType<TableResultType<RowServerType>> = {
@@ -66,10 +82,10 @@ export function useServerDb() {
                 },
             };
             try {
-                // 查询数据
-                let serverData = await (await db()).select<RowServerType[]>(dataSql, [id]);
+                // 查询数据（env_tags JSON 列反序列化为数组）
+                let serverData = await (await db()).select<any[]>(dataSql, [id]);
                 if (serverData && serverData.length > 0) {
-                    dataResult.data.data = serverData[0];
+                    dataResult.data.data = { ...serverData[0], envTags: envTagsFromDb(serverData[0].envTags) };
                 }
                 dataResult.msg = "查询服务器信息成功";
             } catch (error) {
@@ -85,7 +101,7 @@ export function useServerDb() {
          * @param server 服务器
          */
         insertServer: async (server: RowServerType) => {
-            let insertSql = "INSERT INTO t_server (project_id, name, os, ip, port, account, pwd, description) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id;";
+            let insertSql = "INSERT INTO t_server (project_id, name, os, ip, port, account, pwd, description, env_tags) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id;";
 
             // 定义(默认)响应结果
             let dataResult: DataResultType<number> = {
@@ -107,7 +123,7 @@ export function useServerDb() {
                     return dataResult;
                 }
 
-                let rowResult = await (await db()).execute(insertSql, [server.projectId, server.name, server.os, server.ip, server.port, server.account, server.pwd, server.description]);
+                let rowResult = await (await db()).execute(insertSql, [server.projectId, server.name, server.os, server.ip, server.port, server.account, server.pwd, server.description, envTagsToDb(server.envTags)]);
                 if (rowResult.lastInsertId && rowResult.lastInsertId > 0) {
                     dataResult.code = 0;
                     dataResult.data = rowResult.lastInsertId;
@@ -129,7 +145,7 @@ export function useServerDb() {
          * @param server 服务器
          */
         updateServer: async (server: RowServerType) => {
-            let updateSql = "UPDATE t_server SET project_id=$1, name=$2, os=$3, ip=$4, port=$5, account=$6, pwd=$7, description=$8 WHERE id=$9;";
+            let updateSql = "UPDATE t_server SET project_id=$1, name=$2, os=$3, ip=$4, port=$5, account=$6, pwd=$7, description=$8, env_tags=$9 WHERE id=$10;";
 
             // 定义(默认)响应结果
             let dataResult: DataResultType<boolean> = {
@@ -151,7 +167,7 @@ export function useServerDb() {
                     return dataResult;
                 }
 
-                let rowResult = await (await db()).execute(updateSql, [server.projectId, server.name, server.os, server.ip, server.port, server.account, server.pwd, server.description, server.id]);
+                let rowResult = await (await db()).execute(updateSql, [server.projectId, server.name, server.os, server.ip, server.port, server.account, server.pwd, server.description, envTagsToDb(server.envTags), server.id]);
                 if (rowResult.rowsAffected > 0) {
                     dataResult.code = 0;
                     dataResult.data = true;
