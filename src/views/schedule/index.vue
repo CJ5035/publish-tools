@@ -162,6 +162,19 @@ const loadScheduleList = async () => {
 };
 const onSave = async () => {
   await formRef.value.validate();
+  // 高危操作确认：Pro（生产）环境的定时发布需二次确认，与首页口径一致（方案 §2.4）
+  if (form.environment === 3) {
+    const projectName = projectList.value.find((p) => p.id === form.projectId)?.name ?? "";
+    try {
+      await ElMessageBox.confirm(
+        `即将创建到生产环境【${projectName} / Pro】的定时发布任务，确认？`,
+        "高危操作确认",
+        { type: "warning", confirmButtonText: "确认创建", cancelButtonText: "取消" }
+      );
+    } catch {
+      return;
+    }
+  }
   saving.value = true;
   try {
     const projectName = projectList.value.find((p) => p.id === form.projectId)?.name ?? "";

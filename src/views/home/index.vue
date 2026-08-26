@@ -267,7 +267,7 @@
             <div class="log-toolbar" v-if="logPrintInfo.length > 0">
               <el-button size="small" :disabled="uiLocked" @click="copyLogs">复制日志</el-button>
             </div>
-            <div ref="logContentRef" class="card-item-content log-content">
+            <div ref="logContentRef" class="card-item-content log-content" @scroll="onLogScroll">
               <p v-for="log in logPrintInfo" :class="log.type">
                 {{ log.content.value }}
                 <el-text :type="log.content.uploadFile.currNumber >=
@@ -317,6 +317,7 @@ import {
 } from "@/utils/other";
 import { cmdInvoke } from "@/utils/command";
 import { createLogStore } from "./publishLogStore";
+import commonFunction from "@/utils/commonFunction";
 import mittBus from "@/utils/mitt";
 import { useSettingsDb } from "@/database/settings/index";
 import { loadPublishSettings } from "@/utils/publishSettings";
@@ -994,6 +995,14 @@ const onRemoveLogs = () => {
  * @param content 日志内容
  * @param type：log-info、log-warning、log-error、log-success
  */
+// 智能滚底：仅当用户停留在日志底部（距底 < 30px）时新日志才自动跟随，上翻即停止跟随
+const isLogPinned = ref(true);
+const onLogScroll = () => {
+  const el = logContentRef.value;
+  if (!el) return;
+  isLogPinned.value = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+};
+
 const printInfoLog = (
   content: string,
   type: "log-info" | "log-warning" | "log-error" | "log-success" = "log-info",
@@ -1001,16 +1010,18 @@ const printInfoLog = (
 ) => {
   const logInfo = logStore.print(content, type, showDate);
   nextTick(() => {
-    logContentRef.value.scrollTop = logContentRef.value.scrollHeight;
+    if (isLogPinned.value && logContentRef.value) {
+      logContentRef.value.scrollTop = logContentRef.value.scrollHeight;
+    }
   });
   return logInfo;
 };
 
-// 复制日志到剪贴板
+// 复制日志到剪贴板（复用 commonFunction.copyText：vue-clipboard3 在 WebView2 下可靠）
 const copyLogs = async () => {
-  const text = logPrintInfo.value.map(log => log.content.value).join("\n");
+  const { copyText } = commonFunction();
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(logPrintInfo.value.map(log => log.content.value).join("\n"));
     ElMessage.success("日志已复制");
   } catch {
     ElMessage.warning("复制失败，请手动选择复制");
