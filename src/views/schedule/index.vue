@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts" name="schedule">
-import { reactive, ref, onMounted, onUnmounted } from "vue";
+import { reactive, ref, onMounted, onUnmounted, onActivated, onDeactivated } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { usePublishScheduleDb } from "@/database/publishSchedule/index";
 import { useProjectDb } from "@/database/project/index";
@@ -216,9 +216,25 @@ onMounted(async () => {
   await Promise.all([loadProjects(), loadScheduleList()]);
   const s = await settingsDb.getSettings();
   if (s.code === 0 && s.data) oneClickEnabled.value = s.data.oneClickPublishEnabled;
-  refreshTimer.value = setInterval(() => loadScheduleList(), 30000);
 });
-onUnmounted(() => { if (refreshTimer.value) clearInterval(refreshTimer.value); });
+
+// 轮询随激活态启停：路由 isKeepAlive 下 onUnmounted 在缓存期间不触发，改由 activated/deactivated 接管
+const startRefreshTimer = () => {
+  if (refreshTimer.value) return;
+  refreshTimer.value = setInterval(() => loadScheduleList(), 30000);
+};
+const stopRefreshTimer = () => {
+  if (!refreshTimer.value) return;
+  clearInterval(refreshTimer.value);
+  refreshTimer.value = null;
+};
+onActivated(() => {
+  void loadScheduleList();
+  startRefreshTimer();
+});
+onDeactivated(stopRefreshTimer);
+// 兜底：非 keep-alive 卸载路径（deactivated 不触发）也能清表
+onUnmounted(stopRefreshTimer);
 </script>
 
 <style scoped lang="scss">
