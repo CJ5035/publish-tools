@@ -90,6 +90,20 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 							isIframe: false,
 							icon: 'smom-icon smom-icon-xuanzefabu'
 						},
+					},
+					{
+						path: '/schedule',
+						name: 'schedule',
+						component: () => import('@/views/schedule/index.vue'),
+						meta: {
+							title: 'message.router.schedule',
+							isLink: '',
+							isHide: false,
+							isKeepAlive: true,
+							isAffix: false,
+							isIframe: false,
+							icon: 'smom-icon smom-icon-duoyuanfabu'
+						},
 					}
 				]
 			},
