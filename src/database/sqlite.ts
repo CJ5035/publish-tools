@@ -45,7 +45,8 @@ async function ensureSchema(database: Database) {
         port INTEGER,
         account TEXT,
         pwd TEXT,
-        description TEXT
+        description TEXT,
+        env_tags TEXT
     )`);
 
     await database.execute(`CREATE TABLE IF NOT EXISTS t_backup (
@@ -178,6 +179,12 @@ async function ensureSchema(database: Database) {
     const hasBuildMode = columns.some((column) => column.name === "build_mode");
     if (!hasBuildMode) {
         await database.execute("ALTER TABLE t_app_config ADD COLUMN build_mode TEXT DEFAULT 'Debug'");
+    }
+
+    // t_server 加环境标签列（向导服务器环境选择持久化；JSON 数组，如 "[1,3]"，空=未指定）
+    const serverColumns = await database.select<{ name: string }[]>("PRAGMA table_info(t_server)");
+    if (!serverColumns.some((column) => column.name === "env_tags")) {
+        await database.execute("ALTER TABLE t_server ADD COLUMN env_tags TEXT");
     }
 
     // ========== 改列（服务重试列名由 stop_retry 统一为 retry，老库存在旧列则逐列重命名） ==========

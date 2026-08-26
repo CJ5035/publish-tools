@@ -7,6 +7,7 @@ export default {
 		config: 'Configuration',
 		projectManage: 'project manage',
 		appconfig: 'application configuration',
+		wizard: 'Config Wizard',
 		server: 'server',
 		sshInstall: 'ssh install',
 		backups: 'backup',

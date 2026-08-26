@@ -15,7 +15,8 @@ export interface WizardServer {
   pwd: string;
   scanRoot: string;
   isNew: boolean;
-  /** 归属环境集合（1=Dev/2=Uat/3=Pro）：向导会话内属性，不落库，随草稿持久化（项 10） */
+  /** 归属环境集合（1=Dev/2=Uat/3=Pro）：随草稿持久化，且向导提交时落库 t_server.env_tags；
+   *  重新带入时以库值为准，无库值按名称推导（项 10） */
   envTags: number[];
   /** 是否 wpfClient 服务器（项 13）：不落库，随草稿持久化；续配带入时按已有配置回勾 */
   isWpfServer: boolean;

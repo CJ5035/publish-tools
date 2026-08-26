@@ -25,6 +25,8 @@ declare type RowServerType = {
 	account: string;
 	pwd: string;
 	description: string | null;
+	/** 环境标签集合（1=Dev/2=Uat/3=Pro）：配置向导维护并落库 t_server.env_tags；null=未指定 */
+	envTags?: number[] | null;
 	loading?: boolean | null;
 };
 

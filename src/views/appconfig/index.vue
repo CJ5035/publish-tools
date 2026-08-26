@@ -55,7 +55,7 @@
           </el-icon>
           新增
         </el-button>
-        <el-button size="default" type="primary" class="ml10" @click="wizardRef?.open()">
+        <el-button size="default" type="primary" class="ml10" @click="onOpenWizard">
           配置向导
         </el-button>
         <el-button
@@ -150,12 +150,12 @@
     </el-card>
     <appconfig-dialog ref="appconfigDialogRef" @refresh="getTableData()" />
     <backup-dialog ref="backupDialogRef" />
-    <project-wizard ref="wizardRef" @refresh="getTableData()" />
   </div>
 </template>
 
 <script setup lang="ts" name="appconfig">
-import { ref, reactive, onBeforeMount, onMounted, defineAsyncComponent } from "vue";
+import { ref, reactive, onBeforeMount, onMounted, onActivated, defineAsyncComponent } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import _ from "lodash";
 import { useProjectDb } from "@/database/project/index";
@@ -175,10 +175,6 @@ const AppconfigDialog = defineAsyncComponent(
 const backupDialogRef = ref();
 const BackupDialog = defineAsyncComponent(
   () => import("@/views/backups/components/backupDialog.vue")
-);
-const wizardRef = ref();
-const ProjectWizard = defineAsyncComponent(
-  () => import("@/views/appconfig/components/projectWizard/index.vue")
 );
 
 // 项目信息
@@ -245,6 +241,9 @@ const getTableData = async () => {
   state.tableData.loading = false;
 };
 
+// keep-alive 缓存下从向导页返回时 onBeforeMount 不执行，激活时刷新表格
+onActivated(() => getTableData());
+
 // 分页改变时触发
 const onHandleSizeChange = async (val: number) => {
   state.tableData.param.maxResultCount = val;
@@ -263,6 +262,11 @@ const onHandleCurrentChange = async (val: number) => {
 const onOpenAppconfigDialog = (type: string, row: any = null) => {
   appconfigDialogRef.value.openDialog(type, row);
 };
+
+const router = useRouter();
+
+// 配置向导已抽离为 /wizard 独立页签，此按钮保留为次入口
+const onOpenWizard = () => router.push('/wizard');
 
 // 复制新增
 const onCopyAppconfig = async (row: RowAppconfigType) => {

@@ -4,6 +4,8 @@ export default {
       open: '配置向导',
       title: '配置向导',
       cancel: '取消',
+      restart: '重新开始',
+      restartMsg: '确定放弃当前进度并重新开始配置吗？',
       cancelConfirmTitle: '放弃配置？',
       prev: '上一步',
       next: '下一步',

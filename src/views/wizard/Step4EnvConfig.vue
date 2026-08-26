@@ -133,6 +133,8 @@ onMounted(async () => {
     checkedEnvs.value = [1].filter((e) => !configured.value.has(e));
   }
   syncEnvsToDraft();
+  // 勾选/恢复的环境自动带入关联服务器（草稿已带目标行的不会被覆盖）
+  for (const env of draft.envs) prefillTargets(env);
   // 恢复/推进落在已提交环境时自动切到首个未提交
   if (submitted.value.has(activeEnv.value) || !checkedEnvs.value.includes(activeEnv.value)) {
     const nxt = nextUnsubmittedEnv();
@@ -156,18 +158,23 @@ function syncEnvsToDraft() {
   }
 }
 
-function onEnvsChange() { syncEnvsToDraft(); }
+function onEnvsChange() {
+  syncEnvsToDraft();
+  for (const env of draft.envs) prefillTargets(env);
+}
 
 function onServerChange(trow: any, svc: any) {
-  // 迁自 Step5ServiceAssign（多节点自动带入：当前行填首个未占用节点，其余按识别顺序追加）
+  // 迁自 Step5ServiceAssign（多节点自动带入：当前行填首个未占用节点，其余按识别顺序追加）；
+  // 已占用路径按服务器维度去重：同服务器内不重复，跨服务器允许相同路径（各机目录布局一致是常态），
+  // 否则第二台同布局服务器的行会因路径"已被占用"而填不进路径
   const paths = ((draft.scanResults[trow.serverKey] as any)?.[svc.name] ?? []) as string[];
   if (paths.length === 0) return;
   if (!trow.path) {
-    const used = new Set(svc.targets.map((x: any) => x.path).filter(Boolean));
+    const used = new Set(svc.targets.filter((x: any) => x.serverKey === trow.serverKey).map((x: any) => x.path).filter(Boolean));
     const next = paths.find((p) => p && !used.has(p));
     if (next) trow.path = next;
   }
-  const used = new Set(svc.targets.map((x: any) => x.path).filter(Boolean));
+  const used = new Set(svc.targets.filter((x: any) => x.serverKey === trow.serverKey).map((x: any) => x.path).filter(Boolean));
   for (const p of paths) {
     if (p && !used.has(p)) svc.targets.push({ serverKey: trow.serverKey, path: p, identity: '' });
   }
@@ -176,6 +183,28 @@ function onServerChange(trow: any, svc: any) {
     if (x.serverKey !== trow.serverKey || !x.path) continue;
     const id = resolveIdentity(draft.rawEnumerated, trow.serverKey, x.path);
     if (id) x.identity = id;
+  }
+}
+
+/** 进入环境（挂载/勾选）时自动带入：仅服务器页 envTags 显式包含当前环境、且服务识别（S3）扫到该服务
+ *  节点路径的服务器才逐台建目标行；未打标签的不自动建、未识别到的不建（均留给用户手动处理）；
+ *  自动匹配后仍无任何目标行的服务自动取消勾选（无服务器可配，留着空启用只会拦提交）；wpfClient 不在此列
+ *  （其启用由 WPF 服务器勾选驱动）；已有目标行的服务跳过（不覆盖用户改动/草稿恢复值） */
+function prefillTargets(env: number) {
+  const c = draft.envConfig[env];
+  if (!c) return;
+  const matched = draft.servers.filter((s) => (s.envTags ?? []).includes(env));
+  for (const svc of c.services) {
+    if (svc.name === 'wpfClient' || !svc.enabled || svc.targets.length > 0) continue;
+    for (const srv of matched) {
+      const key = `${srv.ip}:${srv.port}`;
+      const paths = ((draft.scanResults[key] as any)?.[svc.name] ?? []) as string[];
+      if (!paths.some((p) => p)) continue;
+      const trow = { serverKey: key, path: '', identity: '' };
+      svc.targets.push(trow);
+      onServerChange(trow, svc);
+    }
+    if (svc.targets.length === 0) svc.enabled = false;
   }
 }
 
@@ -321,17 +350,36 @@ async function submitEnv(): Promise<boolean> {
       projectId = pr.data;
       draft.project.id = pr.data;
     }
-    // 2) servers（首环境，ip:port 幂等，原样）
-    if (draft.servers.some((x) => x.isNew)) {
+    // 2) servers：新增的插入并挂到本项目（本项目内 ip:port 幂等）；存量（从已有导入/自动带入）库中
+    //    归属非本项目的改挂本项目——t_server 为单项目归属，不挂过来服务器页按项目筛选就看不到；
+    //    环境标签（envTags）随提交落库，向导会话内对它的手动调整重开向导时才不会丢
+    if (draft.servers.length > 0) {
       const exServers = await serverDb.getServerList({ projectId, name: null, sorting: 'id DESC', skipCount: 0, maxResultCount: 1000 } as any);
       const existingKeys = new Set(((exServers.data as any)?.data ?? []).map((x: RowServerType) => `${x.ip}:${x.port}`));
-      for (const s of draft.servers.filter((x) => x.isNew)) {
+      const sameTags = (a?: number[] | null, b?: number[] | null) => JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+      for (const s of draft.servers) {
+        if (!s.isNew) {
+          if (!s.id) continue;
+          const cur = await serverDb.getServerById(s.id);
+          const row = cur.code === 0 ? (cur.data as any)?.data : null;
+          if (!row?.id) continue;
+          if (row.projectId !== projectId || !sameTags(row.envTags, s.envTags)) {
+            const ur = await serverDb.updateServer({ ...row, projectId, envTags: s.envTags ?? [] } as any);
+            if (ur.code !== 0) throw new Error(ur.msg);
+          }
+          continue;
+        }
         const key = `${s.ip}:${s.port}`;
         if (existingKeys.has(key)) {
           const found = ((exServers.data as any).data as RowServerType[]).find((x) => `${x.ip}:${x.port}` === key)!;
-          s.id = found.id!; s.isNew = false; continue;
+          s.id = found.id!; s.isNew = false;
+          if (!sameTags(found.envTags, s.envTags)) {
+            const ur = await serverDb.updateServer({ ...found, envTags: s.envTags ?? [] } as any);
+            if (ur.code !== 0) throw new Error(ur.msg);
+          }
+          continue;
         }
-        const r = await serverDb.insertServer({ id: null, projectId, projectName: null, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account, pwd: s.pwd, description: null } as any);
+        const r = await serverDb.insertServer({ id: null, projectId, projectName: null, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account, pwd: s.pwd, description: null, envTags: s.envTags ?? [] } as any);
         if (r.code !== 0) throw new Error(r.msg);
         s.id = r.data; s.isNew = false;
       }
