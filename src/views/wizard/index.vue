@@ -1,6 +1,6 @@
 <template>
   <div class="wizard-container layout-padding">
-    <el-card shadow="hover" class="layout-padding-auto">
+    <el-card shadow="hover" class="wizard-card">
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <span>{{ t('message.appconfig.wizard.title') }}</span>
@@ -32,13 +32,14 @@
         <Step2Servers v-else-if="stepIndex===1" ref="s2Ref" />
         <Step3Identify v-else-if="stepIndex===2" ref="s3Ref" />
         <Step4EnvConfig v-else-if="stepIndex===3" ref="s4eRef" :current-env="currentEnv" @switch-env="onSwitchEnv" @submitted="onEnvSubmitted" />
-
-        <div style="margin-top:20px;text-align:right;">
-          <el-button @click="onPrev" :disabled="stepIndex===0">{{ t('message.appconfig.wizard.prev') }}</el-button>
-          <el-button v-if="stepIndex!==3" type="primary" @click="onNext">{{ t('message.appconfig.wizard.next') }}</el-button>
-        </div>
       </template>
     </el-card>
+
+    <!-- 底部操作条在滚动区外固定，内容再长也始终可见 -->
+    <div v-if="!isSummary" class="wizard-footer">
+      <el-button @click="onPrev" :disabled="stepIndex===0">{{ t('message.appconfig.wizard.prev') }}</el-button>
+      <el-button v-if="stepIndex!==3" type="primary" @click="onNext">{{ t('message.appconfig.wizard.next') }}</el-button>
+    </div>
   </div>
 </template>
 
@@ -203,3 +204,21 @@ function onFinish() {
   router.push('/appconfig');
 }
 </script>
+
+<style scoped lang="scss">
+// .layout-padding 本身是定高 + overflow:hidden 的 flex 列（表格页模式），向导沿用该布局：
+// 滚动下沉到卡片内部，底部操作条留在滚动区外固定，内容再长也无需滚到底才能翻页
+.wizard-container {
+  .wizard-card {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .wizard-footer {
+    flex-shrink: 0;
+    padding-top: 15px;
+    text-align: right;
+  }
+}
+</style>

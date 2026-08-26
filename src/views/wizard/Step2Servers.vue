@@ -38,7 +38,7 @@
           </el-select>
         </template>
       </el-table-column>
-      <el-table-column :label="t('message.appconfig.wizard.wpfServerCol')" width="110">
+      <el-table-column :label="t('message.appconfig.wizard.wpfServerCol')" width="70">
         <template #default="{ row }">
           <el-checkbox v-model="row.isWpfServer" />
         </template>
@@ -46,13 +46,13 @@
       <el-table-column :label="t('message.appconfig.wizard.s2.scanRoot')">
         <template #default="{ row }"><el-input v-model="row.scanRoot" :placeholder="t('message.appconfig.wizard.s2.scanRootPh')" size="small" /></template>
       </el-table-column>
-      <el-table-column :label="t('message.appconfig.wizard.s2.op')" width="200">
+      <el-table-column :label="t('message.appconfig.wizard.s2.op')" width="220" class-name="op-col">
         <template #default="{ row, $index }">
-          <el-tag v-if="testStatus[`${row.ip}:${row.port}`]" size="small" :type="testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'success' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'danger' : 'warning'">
-            {{ t(`message.appconfig.wizard.test${testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'Ok' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'Fail' : 'Testing'}`) }}
-          </el-tag>
           <el-button size="small" @click="onCopyRow(row)">{{ t('message.appconfig.wizard.copyRow') }}</el-button>
-          <el-button size="small" @click="onTest(row)">{{ t('message.appconfig.wizard.s2.test') }}</el-button>
+          <el-button size="small"
+            :loading="testStatus[`${row.ip}:${row.port}`] === 'testing'"
+            :type="testStatus[`${row.ip}:${row.port}`] === 'ok' ? 'success' : testStatus[`${row.ip}:${row.port}`] === 'fail' ? 'danger' : undefined"
+            @click="onTest(row)">{{ testBtnLabel(row) }}</el-button>
           <el-button size="small" type="danger" @click="onRemove($index)">{{ t('message.appconfig.wizard.s2.del') }}</el-button>
         </template>
       </el-table-column>
@@ -125,6 +125,15 @@ async function testOne(row: WizardServer) {
   }
 }
 
+/** 测试按钮文案：有结果时按钮本身兼作状态展示（替代原行内 tag，避免窄操作列内换行） */
+function testBtnLabel(row: WizardServer): string {
+  const s = testStatus.value[`${row.ip}:${row.port}`];
+  if (s === 'ok') return t('message.appconfig.wizard.testOk');
+  if (s === 'fail') return t('message.appconfig.wizard.testFail');
+  if (s === 'testing') return t('message.appconfig.wizard.testTesting');
+  return t('message.appconfig.wizard.s2.test');
+}
+
 onMounted(async () => {
   if (!draft.project.id || draft.servers.length > 0) return;
   try {
@@ -148,7 +157,8 @@ onMounted(async () => {
     for (const s of rows) {
       const key = `${s.ip}:${s.port}`;
       if (draft.servers.some((x) => `${x.ip}:${x.port}` === key)) continue;
-      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false, envTags: deriveServerEnvTags(s.name), isWpfServer: wpfServerIds.has(s.id!) });
+      // 环境标签以库中持久化的为准（向导提交时落库），无库值才按名称推导
+      draft.servers.push({ id: s.id!, name: s.name, os: s.os, ip: s.ip, port: s.port, account: s.account ?? '', pwd: s.pwd ?? '', scanRoot: '', isNew: false, envTags: (s.envTags?.length ?? 0) > 0 ? [...s.envTags!] : deriveServerEnvTags(s.name), isWpfServer: wpfServerIds.has(s.id!) });
     }
     importedCount.value = draft.servers.length;
   } catch (e) {
@@ -182,7 +192,8 @@ function onConfirmImport(){
   for(const s of importSelected.value){
     const key = `${s.ip}:${s.port}`;
     if(draft.servers.some(x=>`${x.ip}:${x.port}`===key)) continue;
-    draft.servers.push({ id:s.id!, name:s.name, os:s.os, ip:s.ip, port:s.port, account:s.account??'', pwd:s.pwd??'', scanRoot:'', isNew:false, envTags: deriveServerEnvTags(s.name), isWpfServer: false });
+    // 环境标签以库中持久化的为准（向导提交时落库），无库值才按名称推导
+    draft.servers.push({ id:s.id!, name:s.name, os:s.os, ip:s.ip, port:s.port, account:s.account??'', pwd:s.pwd??'', scanRoot:'', isNew:false, envTags: (s.envTags?.length ?? 0) > 0 ? [...s.envTags!] : deriveServerEnvTags(s.name), isWpfServer: false });
   }
   importVisible.value=false;
 }
@@ -213,3 +224,10 @@ async function validate(): Promise<boolean>{
 }
 defineExpose({ validate });
 </script>
+
+<style scoped lang="scss">
+// 操作列 220px：Element 默认按钮间距 12px 时三按钮放不下会换行，压缩为 6px
+.el-table :deep(.op-col .el-button + .el-button) {
+  margin-left: 6px;
+}
+</style>

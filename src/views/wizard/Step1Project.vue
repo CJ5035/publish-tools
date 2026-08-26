@@ -58,18 +58,20 @@
     <div v-if="draft.tfs || tfsDetectFailed">
       <h4>{{ t('message.appconfig.wizard.s1tfs.title') }} <el-tag v-if="tfsDetecting" size="small">{{ t('message.appconfig.wizard.s1tfs.detecting') }}</el-tag></h4>
       <template v-if="draft.tfs">
-        <el-form label-width="110px">
-          <el-form-item :label="t('message.appconfig.wizard.s1tfs.name')" required>
-            <el-input v-model="draft.tfs.tfsName" maxlength="50" clearable :placeholder="t('message.appconfig.wizard.s1tfs.namePh')" style="max-width:360px;" />
-          </el-form-item>
-        </el-form>
-        <el-descriptions :column="1" border size="small">
-          <el-descriptions-item :label="t('message.appconfig.wizard.s1tfs.serverUrl')">{{ draft.tfs.tfsServerUrl }}</el-descriptions-item>
-          <el-descriptions-item :label="t('message.appconfig.wizard.s1tfs.sourcePath')">{{ draft.tfs.tfsSourcePath }}</el-descriptions-item>
-          <el-descriptions-item :label="t('message.appconfig.wizard.s1tfs.localPath')">{{ draft.tfs.tfsLocalPath }}</el-descriptions-item>
-          <el-descriptions-item :label="t('message.appconfig.wizard.s1tfs.tfvc')">{{ draft.tfs.tfvcPath }}</el-descriptions-item>
-          <el-descriptions-item :label="t('message.appconfig.wizard.s1tfs.workspace')">{{ draft.tfs.workspaceName }}</el-descriptions-item>
-        </el-descriptions>
+        <el-table :data="tfsRows" border size="small">
+          <el-table-column prop="label" :label="t('message.appconfig.wizard.s1tfs.colItem')" width="160">
+            <template #default="{ row }">
+              <span v-if="row.key === 'tfsName'" style="color: var(--el-color-danger); margin-right: 4px;">*</span>{{ row.label }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="value" :label="t('message.appconfig.wizard.s1tfs.colValue')">
+            <template #default="{ row }">
+              <el-input v-if="row.key === 'tfsName'" v-model="draft.tfs.tfsName" maxlength="50" clearable
+                :placeholder="t('message.appconfig.wizard.s1tfs.namePh')" size="small" style="max-width: 360px;" />
+              <span v-else>{{ row.value }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
         <el-text type="info" size="small">{{ t('message.appconfig.wizard.s1tfs.saveHint') }}</el-text>
       </template>
       <div v-else style="color:#E6A23C;">{{ tfsDetectFailed }}</div>
@@ -106,6 +108,20 @@ const projectList = ref<RowProjectType[]>([]);
 const clientPathRows = computed(() => {
   const map: Record<string,string> = { webApiHost:'WebApiHost', webClient:'WebClient', scheduleServer:'ScheduleServer', spcMonitor:'SpcMonitor', wpfClient:'WpfClient' };
   return Object.entries(map).map(([k,label]) => ({ service: label, path: (draft.project.clientPaths as any)[k] || '' }));
+});
+
+// TFS 识别结果表格行；名称行在模板里渲染为可编辑输入框，其余只读
+const tfsRows = computed(() => {
+  if (!draft.tfs) return [];
+  const w = 'message.appconfig.wizard.s1tfs.';
+  return [
+    { key: 'tfsName', label: t(w + 'name'), value: draft.tfs.tfsName },
+    { key: 'tfsServerUrl', label: t(w + 'serverUrl'), value: draft.tfs.tfsServerUrl },
+    { key: 'tfsSourcePath', label: t(w + 'sourcePath'), value: draft.tfs.tfsSourcePath },
+    { key: 'tfsLocalPath', label: t(w + 'localPath'), value: draft.tfs.tfsLocalPath },
+    { key: 'tfvcPath', label: t(w + 'tfvc'), value: draft.tfs.tfvcPath },
+    { key: 'workspaceName', label: t(w + 'workspace'), value: draft.tfs.workspaceName },
+  ];
 });
 
 async function loadProjects() {

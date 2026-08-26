@@ -107,7 +107,7 @@ export default {
         scanRoot: 'Scan Root',
         scanRootPh: 'Optional: fallback directory scan when service enumeration fails',
         op: 'Action',
-        test: 'Test Connection',
+        test: 'Test',
         del: 'Delete',
         connOk: 'Connection succeeded',
         connFail: 'Connection failed',
