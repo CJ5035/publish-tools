@@ -42,9 +42,10 @@
             <div class="card-title">
               <el-row>
                 <el-col :span="12">
-                  发布信息
-                  <el-tag v-if="isScheduledRunning" type="warning" effect="light" size="small"
-                    class="scheduled-running-banner">⏱ 定时发布执行中，请稍候</el-tag>
+                  <span>发布信息</span>
+                  <el-badge v-if="schedulerStore.runningCount > 0" :value="schedulerStore.runningCount"
+                    class="ml5"><span class="t-cursor-pointer" title="查看定时任务"
+                      @click="router.push('/schedule')">⏱ 定时任务</span></el-badge>
                 </el-col>
                 <el-col :span="12">
                   <div class="item-btn-box">
@@ -311,13 +312,11 @@ import { Refresh, CircleClose, EditPen, VideoPause, VideoPlay, Close } from "@el
 import { useRouter } from "vue-router";
 import { useProjectDb } from "@/database/project/index";
 import { useAppconfigDb } from "@/database/appconfig/index";
-import { usePublishScheduleDb } from "@/database/publishSchedule/index";
 import {
   getDefaultSubObject,
 } from "@/utils/other";
 import { cmdInvoke } from "@/utils/command";
 import { createLogStore } from "./publishLogStore";
-import { sendNotification } from '@tauri-apps/plugin-notification';
 import mittBus from "@/utils/mitt";
 import { useSettingsDb } from "@/database/settings/index";
 import { loadPublishSettings } from "@/utils/publishSettings";
@@ -345,13 +344,15 @@ import {
   cloneAppconfig,
   type PublishContext,
 } from "@/composables/publishFlowSupport";
+import { usePublishSchedulerStore } from "@/stores/publishScheduler";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
 
 // 引入应用配置数据库
 const projectDb = useProjectDb();
 const appconfigDb = useAppconfigDb();
-const publishScheduleDb = usePublishScheduleDb();
+// 全局定时发布调度器（App 挂载即启动；首页仅消费角标状态，不再持有页面级定时逻辑）
+const schedulerStore = usePublishSchedulerStore();
 const settingsDb = useSettingsDb();
 const oneClickEnabled = ref(0); // 0 关 / 1 开
 
@@ -497,9 +498,7 @@ const generatePublishLog = ref({
   data: "",
   logs: "",
 });
-// 定时发布相关
-const scheduledTimerRef = ref<ReturnType<typeof setInterval> | null>(null);
-const isScheduledRunning = ref(false);
+// 定时发布相关：页面级检测器已退场，由全局调度器（stores/publishScheduler）接管
 const state = reactive({
   funModule: [
     {
@@ -562,9 +561,10 @@ const visibleFunModule = computed(() => {
 });
 
 // UI 统一锁定（临时护栏，第三批调度中心上线后由架构根治取代）：
-// 任一功能模块 loading 中 或 定时发布执行中，所有会写入/重载 state.publishData 的入口统一禁用
+// 任一功能模块 loading 中，所有会写入/重载 state.publishData 的入口统一禁用
+// （定时发布执行中一项已随页面级定时逻辑退场：调度器以独立 ctx 执行，不再读取页面 state）
 const uiLocked = computed(
-  () => isScheduledRunning.value || state.funModule.some((m) => m.loading)
+  () => state.funModule.some((m) => m.loading)
 );
 
 // 功能模块触发
@@ -584,11 +584,6 @@ const confirmProPublish = async (): Promise<boolean> => {
   }
 };
 const onFunModuleHandle = async (index: number) => {
-  // 定时发布执行中早退守卫（临时护栏）：避免功能卡并发改写运行中任务读取的页面状态
-  if (isScheduledRunning.value) {
-    ElMessage.warning("⏱ 定时发布执行中，请稍候");
-    return;
-  }
   // index 是 visibleFunModule 的渲染下标，反查原始下标，避免过滤后漂移
   const origIndex = state.funModule.findIndex(
     (f) => f.title === visibleFunModule.value[index].title
@@ -983,121 +978,6 @@ const onRemoveLogs = () => {
   generatePublishLog.value.logs = "";
 };
 
-// ===== 定时发布检测器 =====
-
-/** 启动定时检测（每30秒轮询待执行任务） */
-const startScheduledPublishChecker = () => {
-  if (scheduledTimerRef.value) return;
-  scheduledTimerRef.value = setInterval(checkScheduledPublish, 30000);
-  // 启动后立即执行一次检测
-  checkScheduledPublish();
-};
-
-/** 停止定时检测 */
-const stopScheduledPublishChecker = () => {
-  if (scheduledTimerRef.value) {
-    clearInterval(scheduledTimerRef.value);
-    scheduledTimerRef.value = null;
-  }
-};
-
-/** 检测并执行到时间的定时发布任务 */
-const checkScheduledPublish = async () => {
-  if (isScheduledRunning.value) return;
-  try {
-    const dataResult = await publishScheduleDb.getPendingSchedules();
-    if (dataResult.code !== 0 || !dataResult.data.length) return;
-
-    const now = new Date().getTime();
-    for (const schedule of dataResult.data) {
-      const scheduledTime = new Date(schedule.scheduledTime).getTime();
-      if (scheduledTime <= now) {
-        await executeScheduledPublish(schedule);
-      }
-    }
-  } catch (error) {
-    console.error("检测定时发布任务出错:", error);
-  }
-};
-
-/** 执行定时发布 */
-const executeScheduledPublish = async (schedule: RowPublishScheduleType) => {
-  if (isScheduledRunning.value) return;
-  isScheduledRunning.value = true;
-  // 显式刷新发布设置缓存（定时链路不依赖旧缓存，供 getRetryArgs / 共享 upload 工具使用）
-  await loadPublishSettings();
-  try {
-    // 更新状态为执行中
-    await publishScheduleDb.updateScheduleStatus(schedule.id, 'executing');
-
-    // 切换到对应的项目和配置
-    state.publishData.projectId = schedule.projectId;
-    state.publishData.projectName = schedule.projectName;
-    state.publishData.environment = schedule.environment;
-    await getPublishAppconfigs();
-
-    // 临时桥接：定时链路对引擎的最小编译等价（Task 4 调度中心接管后随 executeScheduledPublish 一并删除）
-    const schCtx: PublishContext = {
-      projectId: state.publishData.projectId,
-      projectName: state.publishData.projectName,
-      environment: state.publishData.environment,
-      isScheduled: true,
-      logger: logStore,
-      signal: createPublishSignal(),
-      status: createStatusCtl(publishStatus, publishedAt),
-      generatePublishLog: generatePublishLog.value,
-      appconfig: cloneAppconfig(state.publishData.appconfigData),
-      assemblyOutPath: await resolveAssemblyOutPath(state.publishData.projectId, state.publishData.projectName, state.publishData.environment, logStore),
-      deployRecorder: null,
-    };
-
-    // 初始化日志输出
-    onRemoveLogs();
-    initLogs(schCtx);
-    printInfoLog(`定时发布任务开始执行：${schedule.publishType}`);
-
-    let success = false;
-    if (schedule.publishType === '一键发布') {
-      success = await oneClickPublishing(schCtx);
-    } else if (schedule.publishType === '手动发布') {
-      success = await projectPublish(schCtx);
-      if (success) await getProjectDefault();
-    }
-
-    if (success) {
-      printInfoLog(`${schedule.publishType}成功（定时任务）.`);
-      try {
-        sendNotification({ title: "定时发布完成", body: `${schedule.publishType} - ${schedule.projectName} 发布成功！` });
-      } catch { /* 通知失败不影响结果 */ }
-      await publishScheduleDb.updateScheduleStatus(schedule.id, 'completed', `${schedule.publishType}成功`);
-    } else {
-      // 捕获执行过程中的日志作为失败原因
-      const failLogs = collectFailLogs();
-      await publishScheduleDb.updateScheduleStatus(schedule.id, 'failed', failLogs || `${schedule.publishType}失败`);
-    }
-  } catch (error) {
-    const errorMsg = String(error);
-    printInfoLog(`定时发布执行异常：${errorMsg}`, "log-error");
-    await publishScheduleDb.updateScheduleStatus(schedule.id, 'failed', errorMsg);
-  } finally {
-    isScheduledRunning.value = false;
-  }
-};
-
-/** 收集执行失败时的日志内容 */
-const collectFailLogs = () => {
-  const logs = logPrintInfo.value
-    .filter(log => log.type === "log-error" || log.type === "log-warning")
-    .map(log => log.content.value)
-    .filter(Boolean);
-  // 最多取最近 20 行错误/警告日志
-  const recentLogs = logs.slice(-20);
-  if (recentLogs.length > 0) {
-    return `失败日志（共${logs.length}条）:\n${recentLogs.join("\n")}`;
-  }
-  return "";
-};
-
 /**
  * 打印日志信息
  * @param content 日志内容
@@ -1132,34 +1012,25 @@ onBeforeMount(async () => {
   await getProjectDefault();
 });
 
-// 挂载后启动定时发布检测器
 onMounted(() => {
-  startScheduledPublishChecker();
   reloadSettings();
   mittBus.on("settingsChanged", reloadSettings);
 });
 
-// 卸载时停止定时检测
 onUnmounted(() => {
-  stopScheduledPublishChecker();
   mittBus.off("settingsChanged", reloadSettings);
 });
 
 onActivated(async () => {
   console.log('=== onActivated 被调用 ===');
-  // 定时发布执行期间跳过默认项目重载（临时护栏）：防止重载换掉运行中任务读取的 publishData
-  if (!isScheduledRunning.value) {
-    // 每次进入页面都重新查询默认项目并恢复环境
-    await getProjectDefault();
-  }
+  // 每次进入页面都重新查询默认项目并恢复环境（定时任务已由全局调度器独立 ctx 执行，与页面状态解耦）
+  await getProjectDefault();
 
   if (uiLocked.value) {
     console.log("当前模块正在加载中…");
     return;
   }
 
-  // 每次激活时重启检测（确保定时器运行）
-  startScheduledPublishChecker();
   reloadSettings();
 });
 </script>
@@ -1204,12 +1075,6 @@ $homeNavLengh: 8;
         .item-btn-box {
           width: 100%;
           text-align: right;
-        }
-
-        // 定时发布执行中顶部提示（临时护栏）
-        .scheduled-running-banner {
-          margin-left: 8px;
-          vertical-align: middle;
         }
       }
 
@@ -1489,6 +1354,15 @@ $homeNavLengh: 8;
   .t-link-path:hover {
     text-decoration: underline;
     cursor: pointer;
+  }
+
+  // 定时任务角标：可点击跳转任务页
+  .t-cursor-pointer {
+    cursor: pointer;
+  }
+
+  .ml5 {
+    margin-left: 5px;
   }
 
   .publish-controls {

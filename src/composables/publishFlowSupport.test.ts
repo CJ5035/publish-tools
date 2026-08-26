@@ -6,6 +6,7 @@ import {
   buildScheduleMutexKey,
   collectRunLogText,
   cloneAppconfig,
+  createLogStoreForScheduler,
 } from "./publishFlowSupport";
 
 const mkLog = (v: string) => ({ type: "log-info" as const, content: { value: v, uploadFile: { currNumber: 0, totalNumber: 0 } } });
@@ -74,5 +75,15 @@ describe("cloneAppconfig", () => {
     const b = cloneAppconfig(a);
     b.configItems.webApiHost.clientPath = "";
     expect(a.configItems.webApiHost.clientPath).toBe("D:/x");
+  });
+});
+
+describe("createLogStoreForScheduler", () => {
+  it("2000 条上限裁剪，保留最新", () => {
+    const s = createLogStoreForScheduler();
+    for (let i = 1; i <= 2005; i++) s.print(`L${i}`, "log-info", false);
+    expect(s.logs.value).toHaveLength(2000);
+    expect(s.logs.value[0].content.value).toBe("L6");
+    expect(s.logs.value[1999].content.value).toBe("L2005");
   });
 });

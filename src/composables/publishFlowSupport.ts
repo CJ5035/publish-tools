@@ -1,8 +1,12 @@
 // 发布引擎纯支撑层：ctx 类型、信号量、状态控制器、调度互斥键、日志留档收集
 // 仅类型依赖 views/home 的 publishSections / publishLogStore，无运行时反向耦合
+import { ref, type Ref } from "vue";
 import { formatDate } from "@/utils/formatTime";
 import type { AppTypeKey, PublishStatusMap } from "@/views/home/publishSections";
 import type { LogStore } from "@/views/home/publishLogStore";
+
+// 调度器等外部模块统一从本模块取 LogStore 类型（纯类型再导出，类型本体源自 views/home/publishLogStore.ts）
+export type { LogStore };
 
 // ===== generatePublishLog 状态（原 home 内 ref 结构的类型化）=====
 export interface GeneratePublishLogState {
@@ -120,3 +124,20 @@ export const createContextSkeleton = () => ({
   logger: undefined as unknown as LogStore,
   signal: createPublishSignal(),
 });
+
+// ===== 调度器专用日志存储工厂（与 views/home/publishLogStore 的 createLogStore 同形态；
+// 独立实现以保持 composables 不依赖 views 运行时代码，仅保留类型导入）=====
+export const createLogStoreForScheduler = (): LogStore => {
+  const logs = ref<LogPrintType[]>([]) as Ref<LogPrintType[]>;
+  return {
+    logs,
+    print: (content, type = "log-info", showDate = true) => {
+      const nowDate = showDate ? `[${formatDate(new Date(), "YYYY-mm-dd HH:MM:SS")}] ` : "";
+      const entry: LogPrintType = { type, content: { value: content ? `${nowDate}${content}` : "　", uploadFile: { currNumber: 0, totalNumber: 0 } } };
+      logs.value.push(entry);
+      if (logs.value.length > 2000) logs.value.splice(0, logs.value.length - 2000);
+      return entry;
+    },
+    clear: () => { logs.value = []; },
+  };
+};
