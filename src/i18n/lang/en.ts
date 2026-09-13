@@ -15,6 +15,7 @@ export default {
 		about: 'About',
 		tfs: 'TFS',
 		papersPublish: 'file publish',
+		schedule: 'scheduled tasks',
     git: 'Git Management',
 	},
 	staticRoutes: {

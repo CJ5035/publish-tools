@@ -35,6 +35,7 @@ import { useTagsViewRoutes } from "@/stores/tagsViewRoutes";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useThemeConfig } from "@/stores/themeConfig";
+import { usePublishSchedulerStore } from "@/stores/publishScheduler";
 import other from "@/utils/other";
 import { Local, Session } from "@/utils/storage";
 import mittBus from "@/utils/mitt";
@@ -124,6 +125,8 @@ const onDownloadFinished = () => {
 
 // 页面加载完时
 onMounted(() => {
+  // 启动全局定时发布调度器（脱离页面存活，30s 扫描到期任务）
+  usePublishSchedulerStore().start();
   nextTick(() => {
     // 初始化窗口标题（启动时 route watch 尚未触发，标题默认不含版本号）
     other.useTitle();

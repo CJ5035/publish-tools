@@ -15,6 +15,7 @@ export default {
 		about: '关于',
 		tfs: 'TFS',
 		papersPublish: '文件发布',
+		schedule: '定时任务',
 		git: 'Git',
 	},
 	staticRoutes: {

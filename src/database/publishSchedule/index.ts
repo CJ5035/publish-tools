@@ -67,6 +67,28 @@ export function usePublishScheduleDb() {
         },
 
         /**
+         * 查询执行中的定时任务（应用重启后清扫残留 executing 行用）
+         */
+        getExecutingSchedules: async () => {
+            let dataSql = "select id, project_id projectId, project_name projectName, environment, appconfig_id appconfigId, publish_type publishType, scheduled_time scheduledTime, status, create_time createTime, execute_time executeTime, result_log resultLog from t_publish_schedule where status = 'executing' order by scheduled_time asc";
+
+            let dataResult: DataResultType<RowPublishScheduleType[]> = {
+                code: 0,
+                msg: "",
+                data: [],
+            };
+            try {
+                dataResult.data = await (await db()).select<RowPublishScheduleType[]>(dataSql);
+                dataResult.msg = "查询执行中定时任务成功";
+            } catch (error) {
+                dataResult.code = -1;
+                dataResult.msg = "查询执行中定时任务出错：" + JSON.stringify(error);
+                console.error(error);
+            }
+            return dataResult;
+        },
+
+        /**
          * 根据ID查询定时发布任务
          * @param id 任务ID
          */
