@@ -244,7 +244,7 @@
               <el-empty v-else-if="availableEnvironments.length > 0" description="无应用配置信息."
                 v-show="showEmptyAppConfig" :image-size="150" />
               <el-empty v-else description="该项目尚未配置任何发布环境" :image-size="150">
-                <el-button type="primary" @click="wizardRef?.open()">打开配置向导</el-button>
+                <el-button type="primary" @click="router.push('/wizard')">打开配置向导</el-button>
                 <el-button @click="router.push('/appconfig')">前往应用配置</el-button>
               </el-empty>
             </div>
@@ -290,7 +290,6 @@
     <generate-publish-dialog :done="execApplicationAssemblyDone" @exec-application-assembly="onExecApplicationAssembly"
       @exec-done="onExecDone" @refresh="getPublishAppconfigs()" ref="generatePublishDialogRef" />
     <scheduled-publish-dialog ref="scheduledPublishDialogRef" @refresh="getPublishAppconfigs()" />
-    <project-wizard ref="wizardRef" @refresh="onWizardRefresh" />
   </div>
 </template>
 
@@ -377,18 +376,6 @@ const GeneratePublishDialog = defineAsyncComponent(
 const ScheduledPublishDialog = defineAsyncComponent(
   () => import("@/views/home/components/scheduledPublishDialog.vue")
 );
-const ProjectWizard = defineAsyncComponent(
-  () => import("@/views/appconfig/components/projectWizard/index.vue")
-);
-const wizardRef = ref();
-// 向导保存后的刷新：已选项目 → 对当前项目重探测（直接 getProjectDefault 会把选择重置回默认项目）
-const onWizardRefresh = async () => {
-  if (state.publishData.projectId) {
-    await onProjectChange(state.publishData.projectId);
-  } else {
-    await getProjectDefault();
-  }
-};
 
 // 定义变量内容
 const projectList = ref<RowProjectType[]>();
