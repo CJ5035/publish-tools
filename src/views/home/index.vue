@@ -1339,6 +1339,13 @@ $homeNavLengh: 8;
     flex: 1;
     min-height: 0;
 
+    // el-row 是多行 flex（flex-wrap: wrap），行高随最高列的内容撑开且不会缩回，
+    // 左侧折叠面板全展开后会把两列撑出视口、被容器裁剪且内部滚动失效；
+    // 将两列钉在行的确定高度上，卡片内部的 overflow-y: auto 才能生效
+    > .el-col {
+      height: 100%;
+    }
+
     .publish-card-item {
       height: 100%;
       width: 100%;
