@@ -104,18 +104,36 @@ const wpfPath = computed(() => cfg.value?.services.find((s) => s.name === 'wpfCl
 const matchedServers = computed(() => draft.servers.filter((s) => (s.envTags ?? []).length === 0 || (s.envTags ?? []).includes(activeEnv.value)));
 const otherServers = computed(() => draft.servers.filter((s) => !((s.envTags ?? []).length === 0 || (s.envTags ?? []).includes(activeEnv.value))));
 
-/** 零台勾选自动置未勾选（项 13）；有勾选时回填 serverKey 与首个识别路径（immediate：进入环境即自动带出，不等变化） */
-watch(wpfSrv, (v) => {
-  const wpf = cfg.value?.services.find((s) => s.name === 'wpfClient');
-  if (wpf && !v) wpf.enabled = false;
-  if (wpf && v && wpf.targets[0]?.serverKey === '') {
-    wpf.targets[0].serverKey = `${v.ip}:${v.port}`;
-    if (!wpf.targets[0].path) {
-      const p = ((draft.scanResults[`${v.ip}:${v.port}`] as any)?.wpfClient ?? [])[0];
-      if (p) wpf.targets[0].path = p;
+/** 环境配置、服务器、识别路径或目标行就绪后补齐 WPF 空路径；保留已填写值。 */
+watch(
+  [
+    cfg,
+    wpfSrv,
+    () => {
+      const srv = wpfSrv.value;
+      return srv
+        ? draft.scanResults[`${srv.ip}:${srv.port}`]?.wpfClient?.[0] ?? ''
+        : '';
+    },
+    () => Boolean(cfg.value?.services.find((s) => s.name === 'wpfClient')?.targets[0]),
+  ],
+  ([envCfg, srv, detectedPath]) => {
+    if (submitted.value.has(activeEnv.value)) return;
+    const wpf = envCfg?.services.find((s) => s.name === 'wpfClient');
+    if (!wpf) return;
+    if (!srv) {
+      wpf.enabled = false;
+      return;
     }
-  }
-}, { immediate: true });
+    const target = wpf.targets[0];
+    if (!target) return;
+    const key = `${srv.ip}:${srv.port}`;
+    if (target.serverKey && target.serverKey !== key) return;
+    if (!target.serverKey) target.serverKey = key;
+    if (!target.path && detectedPath) target.path = detectedPath;
+  },
+  { immediate: true }
+);
 
 /** 已提交环境以库为准（项 11"以库判定"含会话新增）：configured 挂载预查（tag/默认不勾/可勾选走更新），submitted 会话提交（禁勾/锁定/推进跳过） */
 onMounted(async () => {
