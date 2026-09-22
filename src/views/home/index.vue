@@ -99,8 +99,36 @@
                   <div class="card-item-appconfig" v-if="state.publishData.appconfigData.dllMode">
                     <table class="table-appconfig" cellpadding="0" cellspacing="0">
                       <tr>
+                        <th>获取模式</th>
+                        <td>
+                          <el-select v-model="state.publishData.appconfigData.buildMode" :disabled="uiLocked"
+                            size="default" style="width:140px" @change="onFetchConfigChange('获取模式')">
+                            <el-option label="Debug" value="Debug" />
+                            <el-option label="Release" value="Release" />
+                          </el-select>
+                        </td>
+                      </tr>
+                      <tr>
                         <th>获取dll方式</th>
-                        <td colspan="3">{{ showDllMode() }}</td>
+                        <td colspan="3" class="inline-edit-cell">
+                          <el-select v-model="state.publishData.appconfigData.dllMode" :disabled="uiLocked"
+                            size="default" style="width:130px" @change="onInlineDllModeChange">
+                            <el-option v-for="m in DLL_MODE_OPTIONS" :key="m" :label="m" :value="m" />
+                          </el-select>
+                          <el-date-picker v-if="state.publishData.appconfigData.dllMode === '日期范围'"
+                            v-model="inlineDllModeDate" type="datetimerange" :default-time="DLL_MODE_DEFAULT_TIME"
+                            range-separator="~" start-placeholder="起始日期" end-placeholder="截止日期"
+                            :disabled="uiLocked" size="default" @change="onInlineDateRangeChange" />
+                          <el-input v-if="state.publishData.appconfigData.dllMode === 'DLL名称'"
+                            v-model="inlineDllNameText" type="textarea" :rows="2" :disabled="uiLocked"
+                            placeholder="每行一个，支持*和?通配符，顿号分隔" style="flex:1;min-width:240px"
+                            @change="onInlineDllNameChange" />
+                          <template v-if="state.publishData.appconfigData.dllMode === 'TFS' || state.publishData.appconfigData.dllMode === 'Git'">
+                            <span class="inline-tfs-summary">{{ showDllMode() }}</span>
+                            <el-button size="small" link type="primary" :disabled="uiLocked"
+                              @click="onOpenAppConfig">详情配置</el-button>
+                          </template>
+                        </td>
                       </tr>
                       <tr
                         v-show="state.publishData.appconfigData.dllMode == 'TFS' || state.publishData.appconfigData.dllMode == 'Git'">
@@ -178,23 +206,29 @@
                 </el-collapse-item>
               </el-collapse>
 
+              <div class="section-toolbar">
+                <span>发布范围：<b>{{ publishCount }}</b> / {{ APP_TYPE_ORDER.length }} 个服务</span>
+                <span class="section-toolbar-grow"></span>
+                <el-button size="small" :disabled="uiLocked" @click="selectAllSections(true)">全选</el-button>
+                <el-button size="small" :disabled="uiLocked" @click="selectAllSections(false)">全不选</el-button>
+                <el-button size="small" type="danger" plain :disabled="uiLocked || removableCount === 0" @click="onRemoveChecked">
+                  移除({{ removableCount }})
+                </el-button>
+                <el-button size="small" type="success" plain :disabled="uiLocked || restorableCount === 0" @click="onRestoreChecked">
+                  恢复({{ restorableCount }})
+                </el-button>
+              </div>
+
               <el-collapse v-model="activeSections" class="app-sections-collapse">
                 <el-collapse-item v-for="section in appSections" :key="section.key" :name="section.key"
                   :disabled="section.status === 'removed'">
                   <template #title>
-                    <div class="app-section-title">
+                    <div class="app-section-title" :class="{ 'is-removed': section.status === 'removed' }" @click.stop>
+                      <el-checkbox :model-value="selectedKeys[section.key]" :disabled="uiLocked"
+                        @change="(val: any) => (selectedKeys[section.key] = Boolean(val))" @click.stop></el-checkbox>
                       <el-tag :type="section.tagType" size="small" effect="dark">{{ section.name }}</el-tag>
                       <span class="app-section-summary">{{ section.summary }}</span>
                       <el-tag :type="sectionBadgeType(section.status)" size="small">{{ sectionBadgeText(section) }}</el-tag>
-                      <el-popconfirm title="移除后该模块本次不参与编译/发布，刷新可恢复。确认移除？" width="240"
-                        @confirm="onRemoveSection(section.key)">
-                        <template #reference>
-                          <el-button v-if="section.status !== 'removed'" class="app-section-remove" type="danger" plain size="small"
-                            title="将该模块移除(让其不参与编译/发布)"
-                            :disabled="uiLocked"
-                            @click.stop>移除</el-button>
-                        </template>
-                      </el-popconfirm>
                     </div>
                   </template>
                   <div class="app-section-body">
@@ -290,6 +324,7 @@
     <generate-publish-dialog :done="execApplicationAssemblyDone" @exec-application-assembly="onExecApplicationAssembly"
       @exec-done="onExecDone" @refresh="getPublishAppconfigs()" ref="generatePublishDialogRef" />
     <scheduled-publish-dialog ref="scheduledPublishDialogRef" @refresh="getPublishAppconfigs()" />
+    <publish-confirm-dialog ref="publishConfirmDialogRef" />
   </div>
 </template>
 
@@ -345,6 +380,8 @@ import {
   type PublishContext,
 } from "@/composables/publishFlowSupport";
 import { usePublishSchedulerStore } from "@/stores/publishScheduler";
+import { serializeDllModeDateRange, deserializeDllModeDateRange } from "@/utils/dllModeValue";
+import { DEFAULT_DATE_TIME_START, DEFAULT_DATE_TIME_END } from "@/utils/formatTime";
 
 const SvgIcon = defineAsyncComponent(() => import("@/components/svgIcon/index.vue"));
 
@@ -367,6 +404,7 @@ const reloadSettings = async () => {
 const appconfigDialogRef = ref();
 const generatePublishDialogRef = ref();
 const scheduledPublishDialogRef = ref();
+const publishConfirmDialogRef = ref();
 const AppconfigDialog = defineAsyncComponent(
   () => import("@/views/appconfig/components/appconfigDialog.vue")
 );
@@ -375,6 +413,9 @@ const GeneratePublishDialog = defineAsyncComponent(
 );
 const ScheduledPublishDialog = defineAsyncComponent(
   () => import("@/views/home/components/scheduledPublishDialog.vue")
+);
+const PublishConfirmDialog = defineAsyncComponent(
+  () => import("./components/publishConfirmDialog.vue")
 );
 
 // 定义变量内容
@@ -434,6 +475,13 @@ const buildManualCtx = async (): Promise<PublishContext> => {
     onPauseUi: (paused) => {
       state.funModule[currModuleIndex.value].loadingText = paused ? "已暂停" : "发布中";
     },
+    // 发布前确认：获取程序集成功后、备份/上传前弹出明细（取消则中止发布）
+    confirmBeforeUpload: (summary) =>
+      publishConfirmDialogRef.value.open(summary, {
+        projectName: state.publishData.projectName,
+        environment: state.publishData.environment,
+        dllModeText: showDllMode(),
+      }),
     deployRecorder: null,
   };
   manualCtx.value = ctx;
@@ -444,16 +492,91 @@ const resetPublishStatus = () => {
     publishStatus[key] = "pending";
     publishedAt[key] = "";
   }
-};
-// 移除模块：置空 clientPath（原模板 5 处内联赋值）+ 标记 removed 供面板禁用态展示
-const onRemoveSection = (key: AppTypeKey) => {
-  (state.publishData.appconfigData.configItems as any)[key].clientPath = "";
-  publishStatus[key] = "removed";
+  // 配置重载 = 移除/勾选状态全量恢复（刷新按钮、切项目、切环境都经过此收口）
+  for (const { key } of APP_TYPE_ORDER) selectedKeys[key] = false;
 };
 // 折叠面板模型与展开状态（默认全部折叠）
 const activeSections = ref<string[]>([]);
 const activeBaseConfig = ref<string[]>([]);
 const appSections = computed(() => buildAppSections(state.publishData.appconfigData.configItems, publishStatus));
+
+// 服务多选器：勾选 = 选中待移除/待恢复项（不直接等于发布范围；发布范围由 publishStatus 的 removed 决定）
+const selectedKeys = reactive<Record<AppTypeKey, boolean>>({
+  webApiHost: false, webClient: false, scheduleServer: false, wpfClient: false, spcMonitor: false,
+});
+const publishCount = computed(() => APP_TYPE_ORDER.filter(({ key }) => publishStatus[key] !== "removed").length);
+const removableCount = computed(() => APP_TYPE_ORDER.filter(({ key }) => selectedKeys[key] && publishStatus[key] !== "removed").length);
+const restorableCount = computed(() => APP_TYPE_ORDER.filter(({ key }) => selectedKeys[key] && publishStatus[key] === "removed").length);
+const selectAllSections = (val: boolean) => {
+  for (const { key } of APP_TYPE_ORDER) selectedKeys[key] = val;
+};
+// 批量移除：仅此一次确认，清单列出服务名；操作可逆（恢复按钮 / 刷新）
+const onRemoveChecked = async () => {
+  const names = APP_TYPE_ORDER.filter(({ key }) => selectedKeys[key] && publishStatus[key] !== "removed").map(({ pascal }) => pascal);
+  if (names.length === 0) return;
+  try {
+    await ElMessageBox.confirm(
+      `以下 ${names.length} 个服务将被移除，本次不参与编译/发布（刷新可恢复）：<br/><b>${names.join("、")}</b>`,
+      "批量移除确认",
+      { dangerouslyUseHTMLString: true, type: "warning", confirmButtonText: "确认移除", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+  for (const { key } of APP_TYPE_ORDER) {
+    if (selectedKeys[key] && publishStatus[key] !== "removed") {
+      publishStatus[key] = "removed";
+      selectedKeys[key] = false;
+    }
+  }
+  printInfoLog(`已批量移除 ${names.length} 个服务：${names.join("、")}，本次不参与编译/发布。`, "log-warning");
+};
+const onRestoreChecked = () => {
+  const names = APP_TYPE_ORDER.filter(({ key }) => selectedKeys[key] && publishStatus[key] === "removed").map(({ pascal }) => pascal);
+  for (const { key } of APP_TYPE_ORDER) {
+    if (selectedKeys[key] && publishStatus[key] === "removed") {
+      publishStatus[key] = "pending";
+      selectedKeys[key] = false;
+    }
+  }
+  if (names.length > 0) printInfoLog(`已恢复 ${names.length} 个服务参与本次发布：${names.join("、")}。`, "log-success");
+};
+
+// ===== 基础配置内联编辑（获取模式 / 获取dll方式）=====
+const DLL_MODE_OPTIONS = ["全部", "当天", "最近3天", "日期范围", "DLL名称", "TFS", "Git"];
+// 日期选择器默认时间：起始日 00:00:00 / 截止日 23:59:59（覆盖截止日全天，与弹窗一致）
+const DLL_MODE_DEFAULT_TIME: [Date, Date] = [DEFAULT_DATE_TIME_START, DEFAULT_DATE_TIME_END];
+const inlineDllModeDate = ref<[Date, Date] | null>(null);
+const inlineDllNameText = ref("");
+
+// 配置加载/重载后，把 dllModeValue 同步到内联控件（TFS/Git 不内联编辑，无需同步）
+const syncInlineEditors = () => {
+  inlineDllModeDate.value = deserializeDllModeDateRange(state.publishData.appconfigData.dllModeValue);
+  inlineDllNameText.value =
+    state.publishData.appconfigData.dllMode === "DLL名称" ? String(state.publishData.appconfigData.dllModeValue || "") : "";
+};
+
+// 内联修改统一收口：状态重置 + 日志提示 + 即时落库（消费点读同一对象，无需额外刷新）
+const onFetchConfigChange = async (what: string) => {
+  resetPublishStatus();
+  printInfoLog(`获取配置已变更（${what}），发布状态已重置为待发布，请重新获取程序集。`, "log-warning");
+  const saveResult = await appconfigDb.updateAppconfig(state.publishData.appconfigData);
+  if (saveResult.code !== 0) ElMessage.error(saveResult.msg);
+};
+const onInlineDllModeChange = () => {
+  // 切换方式清空取值（与弹窗 onDllModeChange 行为一致）
+  state.publishData.appconfigData.dllModeValue = "";
+  syncInlineEditors();
+  onFetchConfigChange(`获取dll方式 → ${state.publishData.appconfigData.dllMode}`);
+};
+const onInlineDateRangeChange = (val: [Date, Date] | null) => {
+  state.publishData.appconfigData.dllModeValue = serializeDllModeDateRange(val);
+  onFetchConfigChange("日期范围");
+};
+const onInlineDllNameChange = () => {
+  state.publishData.appconfigData.dllModeValue = inlineDllNameText.value;
+  onFetchConfigChange("获取dll方式");
+};
 
 const sectionBadgeType = (status: AppSectionLike["status"]): "success" | "danger" | "primary" | "info" =>
   status === "published" ? "success" : status === "failed" ? "danger" : status === "publishing" ? "primary" : "info";
@@ -600,12 +723,16 @@ const onFunModuleHandle = async (index: number) => {
     ElMessage.warning("未获取到要发布的应用配置信息！");
     return;
   }
+  // 全部服务已移除：编译/获取/发布无意义（定时创建不受限，执行时按当时状态）
+  if (title !== "定时发布" && publishCount.value === 0) {
+    ElMessage.warning("所有服务均已移除，请先恢复至少一个服务");
+    return;
+  }
   let currModule = state.funModule.find((item) => item.loading);
   if (currModule) {
     ElMessage.info(`正在[${currModule.title}]中，请稍等！`);
     return;
   }
-  if ((title === "一键发布" || title === "手动发布") && !(await confirmProPublish())) return;
   onRemoveLogs();
   state.funModule[origIndex].loading = true;
   // loading 复位收口到 finally：任一 await 抛异常（如编译项目/获取程序集无 try/catch 分支）
@@ -848,6 +975,7 @@ const getPublishAppconfigs = async () => {
       state.publishData.appconfigData
     );
   }
+  syncInlineEditors();
   // 状态徽标重置唯一收口：所有配置重载路径（默认项目/刷新/切项目/切环境/对话框与向导 refresh）都经过这里
   resetPublishStatus();
 };
@@ -1391,6 +1519,36 @@ $homeNavLengh: 8;
     .el-button {
       flex: 1;
       height: 100%;
+    }
+  }
+
+  .section-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--el-color-primary-light-9);
+    border: 1px solid var(--el-color-primary-light-7);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: var(--el-color-primary);
+
+    .section-toolbar-grow {
+      flex: 1;
+    }
+  }
+
+  .inline-edit-cell {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+
+    .inline-tfs-summary {
+      color: var(--el-text-color-secondary);
+      font-size: 13px;
+      align-self: center;
     }
   }
 }

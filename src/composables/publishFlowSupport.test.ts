@@ -49,6 +49,18 @@ describe("createStatusCtl", () => {
     ctl.reset();
     Object.values(map).forEach((v) => expect(v).toBe("pending"));
   });
+  it("removed 状态不被 mark 系列覆盖（多选移除后徽标保持已移除）", () => {
+    const map = { webApiHost: "removed", webClient: "pending", scheduleServer: "pending", wpfClient: "pending", spcMonitor: "pending" } as any;
+    const publishedAt = { webApiHost: "", webClient: "", scheduleServer: "", wpfClient: "", spcMonitor: "" };
+    const ctl = createStatusCtl(map, publishedAt);
+    ctl.markPublishing("webApiHost");
+    expect(map.webApiHost).toBe("removed");
+    ctl.markPublished("webApiHost");
+    expect(map.webApiHost).toBe("removed");
+    expect(publishedAt.webApiHost).toBe("");
+    ctl.markFailed("webApiHost");
+    expect(map.webApiHost).toBe("removed");
+  });
 });
 
 describe("buildScheduleMutexKey", () => {

@@ -62,14 +62,16 @@ export const createStatusCtl = (
   map,
   publishedAt,
   markPublishing(key) {
-    if (this.map[key] !== "published") this.map[key] = "publishing";
+    // removed 同样不可覆盖：主流程 markPublishing 先于 publishXxx 内部跳过判断执行
+    if (this.map[key] !== "published" && this.map[key] !== "removed") this.map[key] = "publishing";
   },
   markPublished(key) {
+    if (this.map[key] === "removed") return;
     this.map[key] = "published";
     this.publishedAt[key] = formatDate(new Date(), "HH:MM");
   },
   markFailed(key) {
-    if (this.map[key] !== "published") this.map[key] = "failed";
+    if (this.map[key] !== "published" && this.map[key] !== "removed") this.map[key] = "failed";
   },
   reset() {
     for (const key of STATUS_KEYS) {
@@ -97,6 +99,21 @@ export const collectRunLogText = (logs: LogPrintType[], maxLines: number = 2000)
 export const cloneAppconfig = (a: RowAppconfigType): RowAppconfigType =>
   JSON.parse(JSON.stringify(a));
 
+// ===== 发布前确认的文件清单（防选错日期：数量 + 修改时间明细）=====
+export interface PublishFileItem {
+  /** Pascal 服务名（与日志文案一致） */
+  service: string;
+  count: number;
+  /** 该服务输出目录内文件的修改时间范围 "最早 ~ 最新" */
+  timeRange: string;
+  files: { name: string; modifiedTime: string; size: number }[];
+}
+export interface PublishFileSummary {
+  items: PublishFileItem[];
+  /** 扫描失败的服务名（降级为仅提示，不阻断发布） */
+  scanFailed: string[];
+}
+
 // ===== 发布运行上下文 =====
 export interface PublishSignalLike extends PublishSignal {}
 export interface PublishContext {
@@ -117,6 +134,8 @@ export interface PublishContext {
   onPauseUi?: (paused: boolean) => void;
   /** 由引擎 projectPublish 开头创建赋值（原模块级变量的 ctx 化） */
   deployRecorder: import("@/utils/deployTaskRecorder").DeployRecorder | null;
+  /** 发布前确认回调（获取程序集成功后、备份/上传前调用；返回 false 中止发布）。手动/一键链路传入，定时链路不传（无人值守） */
+  confirmBeforeUpload?: (summary: PublishFileSummary) => Promise<boolean>;
 }
 
 // 便捷工厂：页面/调度器各自填充业务字段

@@ -108,6 +108,7 @@ fn main() {
             file_module::copy_path,
             file_module::compress_zip,
             file_module::read_files,
+            file_module::list_files_with_meta,
             file_module::delete_paths,
             file_module::move_file,
             file_module::copy_path_by_time,

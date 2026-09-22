@@ -1094,6 +1094,62 @@ pub async fn read_files(path: &str) -> Result<Vec<String>, String> {
     }
 }
 
+/// 单个文件的元数据（供发布前确认弹窗展示明细）
+/// camelCase：与前端 PublishFileItem.files 的字段名（modifiedTime）对齐
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMeta {
+    pub name: String,
+    /// 格式化后的修改时间 "%Y-%m-%d %H:%M:%S"
+    pub modified_time: String,
+    pub size: u64,
+}
+
+/// 列举目录下的文件及元数据（单层，不含子目录）
+///
+/// # Arguments
+/// * `path` - 目录路径
+///
+/// # Returns
+/// * `Ok(Vec<FileMeta>)` 按文件名排序
+/// * `Err(String)` 失败
+#[tauri::command]
+pub async fn list_files_with_meta(path: &str) -> Result<Vec<FileMeta>, String> {
+    let entries = match fs::read_dir(path) {
+        Ok(e) => e,
+        Err(e) => return Err(format!("读取目录出错: {}", e)),
+    };
+    let mut metas: Vec<FileMeta> = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => return Err(format!("获取条目出错: {}", e)),
+        };
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let meta = match fs::metadata(&p) {
+            Ok(m) => m,
+            Err(e) => return Err(format!("获取文件元数据出错: {}", e)),
+        };
+        let modified_time = match meta.modified() {
+            Ok(t) => {
+                let dt: DateTime<Local> = t.into();
+                dt.format("%Y-%m-%d %H:%M:%S").to_string()
+            }
+            Err(e) => return Err(format!("获取文件修改时间出错: {}", e)),
+        };
+        metas.push(FileMeta {
+            name: entry.file_name().into_string().unwrap_or_default(),
+            modified_time,
+            size: meta.len(),
+        });
+    }
+    metas.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(metas)
+}
+
 /// 查找 Directory Opus 的请求器工具 dopusrt.exe
 ///
 /// 按以下顺序检测，取第一个存在 dopusrt.exe 的目录：
