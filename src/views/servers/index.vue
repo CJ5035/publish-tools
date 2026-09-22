@@ -15,9 +15,12 @@
           <el-col :span="6">
             <el-select
               filterable
+              clearable
+              :value-on-clear="() => null"
               placeholder="请选择所属项目"
               size="default"
               v-model="state.tableData.param.projectId"
+              @clear="onSearch"
             >
               <el-option
                 v-for="project in projectList"
@@ -301,6 +304,7 @@ const onReset = async () => {
   state.tableData.param.projectId = null;
   state.tableData.param.name = null;
   await getProjectList();
+  await onSearch();
 };
 
 // 初始化表格数据
