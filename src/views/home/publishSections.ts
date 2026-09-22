@@ -24,6 +24,67 @@ export const APP_TYPE_DISPLAY: ReadonlyArray<AppTypeKey> = ["webApiHost", "webCl
 export const isTypeActive = (clientPath: string | null | undefined, status: PublishStatus): clientPath is string =>
   Boolean(clientPath) && status !== "published" && status !== "removed";
 
+export interface PublishServerTarget {
+  key: AppTypeKey;
+  id: number;
+  name: string;
+}
+
+export interface PublishTargetIssue {
+  key: AppTypeKey;
+  reason: "missing-target" | "invalid-id";
+}
+
+export interface PublishTargetCheck {
+  targets: PublishServerTarget[];
+  issues: PublishTargetIssue[];
+}
+
+const isPositiveSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+// 按发布引擎实际读取的字段收集目标：四个多服务器模块读 serverArr，WpfClient 读旧 serverId。
+// 不访问数据库、不修改配置；入口层据此统一执行存在性校验。
+export function collectActivePublishTargets(configItems: ConfigItemsType, status: PublishStatusMap): PublishTargetCheck {
+  const targets: PublishServerTarget[] = [];
+  const issues: PublishTargetIssue[] = [];
+  const addIssue = (key: AppTypeKey, reason: PublishTargetIssue["reason"]) => {
+    if (!issues.some((issue) => issue.key === key && issue.reason === reason)) {
+      issues.push({ key, reason });
+    }
+  };
+
+  for (const { key } of APP_TYPE_ORDER) {
+    const item = (configItems as any)?.[key];
+    if (!isTypeActive(item?.clientPath, status[key])) continue;
+
+    if (key === "wpfClient") {
+      if (item.serverId === null || item.serverId === undefined) {
+        addIssue(key, "missing-target");
+      } else if (!isPositiveSafeInteger(item.serverId)) {
+        addIssue(key, "invalid-id");
+      } else {
+        targets.push({ key, id: item.serverId, name: String(item.serverName ?? "") });
+      }
+      continue;
+    }
+
+    if (!Array.isArray(item.serverArr) || item.serverArr.length === 0) {
+      addIssue(key, "missing-target");
+      continue;
+    }
+    for (const server of item.serverArr) {
+      if (!isPositiveSafeInteger(server?.id)) {
+        addIssue(key, "invalid-id");
+        continue;
+      }
+      targets.push({ key, id: server.id, name: String(server.name ?? "") });
+    }
+  }
+
+  return { targets, issues };
+}
+
 export interface AppSectionPath {
   identity: string;
   path: string;

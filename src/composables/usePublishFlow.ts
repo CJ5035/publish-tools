@@ -16,7 +16,7 @@ import { getRetryArgs } from "@/utils/publishSettings";
 import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { loadBackupItems, backupRemoteServer } from "@/utils/backupAppconfig";
 import { safeJsonParse } from "@/utils/safeJsonParse";
-import { isTypeActive, APP_TYPE_ORDER } from "@/views/home/publishSections";
+import { collectActivePublishTargets, isTypeActive, APP_TYPE_ORDER } from "@/views/home/publishSections";
 import { type PublishContext, type PublishFileSummary, type PublishFileItem } from "./publishFlowSupport";
 import { useProjectDb } from "@/database/project/index";
 import { useServerDb } from "@/database/servers/index";
@@ -120,6 +120,42 @@ export const oneClickPublishing = async (ctx: PublishContext) => {
 // 项目发布
 export const projectPublish = async (ctx: PublishContext) => {
   if (!ctx.appconfig.id) return false;
+  const configItems = ctx.appconfig.configItems;
+  if (!configItems) {
+    ctx.logger.print("发布配置无效，请检查应用配置后再发布。", "log-error");
+    return false;
+  }
+  const targetCheck = collectActivePublishTargets(configItems, ctx.status.map);
+  if (targetCheck.issues.length > 0) {
+    const issueText = targetCheck.issues.map((issue) => {
+      const appName = APP_TYPE_ORDER.find((item) => item.key === issue.key)?.pascal ?? issue.key;
+      return `${appName}${issue.reason === "missing-target" ? "缺少服务器目标" : "存在非法服务器 ID"}`;
+    });
+    ctx.logger.print(`发布配置无效：${issueText.join("、")}。请到应用配置重新选择后再发布。`, "log-error");
+    return false;
+  }
+  const targetsById = new Map<number, (typeof targetCheck.targets)[number]>();
+  for (const target of targetCheck.targets) {
+    if (!targetsById.has(target.id)) targetsById.set(target.id, target);
+  }
+  const invalidTargets: (typeof targetCheck.targets)[number][] = [];
+  try {
+    for (const [id, target] of targetsById) {
+      if (!(await getServerDetail(ctx, id))) invalidTargets.push(target);
+    }
+  } catch (error) {
+    console.error("服务器校验失败:", error);
+    ctx.logger.print("服务器校验失败，请检查数据库连接后再发布。", "log-error");
+    return false;
+  }
+  if (invalidTargets.length > 0) {
+    const targetText = invalidTargets.map((target) => {
+      const appName = APP_TYPE_ORDER.find((item) => item.key === target.key)?.pascal ?? target.key;
+      return `${appName}/${target.name || "未命名服务器"}（ID: ${target.id}）`;
+    });
+    ctx.logger.print(`服务器校验未通过：${targetText.join("、")}。请到应用配置重新选择后再发布。`, "log-error");
+    return false;
+  }
   const publishStartTime = Date.now();
   const serviceNames = APP_TYPE_ORDER.filter(({ key }) =>
     isTypeActive((ctx.appconfig.configItems as any)[key]?.clientPath, ctx.status.map[key])
@@ -2925,5 +2961,9 @@ export const getServerDetail = async (ctx: PublishContext, id: number) => {
     ctx.logger.print(dataResult.msg, "log-error");
     return null;
   }
-  return dataResult.data.data;
+  const serverInfo = dataResult.data?.data;
+  if (!Number.isSafeInteger(id) || id <= 0 || !serverInfo || !Number.isSafeInteger(serverInfo.id) || serverInfo.id !== id) {
+    return null;
+  }
+  return serverInfo;
 };

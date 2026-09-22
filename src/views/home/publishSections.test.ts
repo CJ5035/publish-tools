@@ -3,6 +3,7 @@ import {
   APP_TYPE_ORDER,
   APP_TYPE_DISPLAY,
   buildAppSections,
+  collectActivePublishTargets,
   filterAppconfigForDialog,
   isTypeActive,
   type PublishStatusMap,
@@ -67,6 +68,128 @@ describe("isTypeActive", () => {
   });
   it("已移除类型不参与编译/发布（多选移除语义）", () => {
     expect(isTypeActive("D:/x", "removed")).toBe(false);
+  });
+});
+
+describe("collectActivePublishTargets", () => {
+  it("按固定发布顺序收集实际消费的服务器字段，且不修改输入", () => {
+    const items = makeConfigItems();
+    const snapshot = JSON.stringify(items);
+
+    expect(collectActivePublishTargets(items, allPending)).toEqual({
+      targets: [
+        { key: "webApiHost", id: 1, name: "应用服务器A" },
+        { key: "webApiHost", id: 2, name: "应用服务器B" },
+        { key: "webClient", id: 3, name: "Web服务器" },
+        { key: "wpfClient", id: 9, name: "Wpf服务器" },
+      ],
+      issues: [],
+    });
+    expect(JSON.stringify(items)).toBe(snapshot);
+  });
+
+  it.each(["webApiHost", "scheduleServer", "webClient", "spcMonitor"] as const)(
+    "%s 的服务器数组为空时报告缺少发布目标",
+    (key) => {
+      const items = makeConfigItems();
+      items[key].clientPath = "D:/src/active";
+      items[key].serverArr = [];
+
+      expect(collectActivePublishTargets(items, allPending).issues).toContainEqual({ key, reason: "missing-target" });
+    }
+  );
+
+  it.each([undefined, {}])("缺失或非数组 serverArr 同样报告缺少目标", (serverArr) => {
+    const items = makeConfigItems();
+    items.webApiHost.serverArr = serverArr as any;
+
+    expect(collectActivePublishTargets(items, allPending).issues).toContainEqual({
+      key: "webApiHost",
+      reason: "missing-target",
+    });
+  });
+
+  it("检查多服务器数组的每一条记录，不只检查第一台", () => {
+    const items = makeConfigItems();
+    items.webApiHost.serverArr[1].id = 0;
+
+    expect(collectActivePublishTargets(items, allPending).issues).toContainEqual({
+      key: "webApiHost",
+      reason: "invalid-id",
+    });
+  });
+
+  it("不能用仅 UI 的 serverIds 放行空 serverArr", () => {
+    const items = makeConfigItems();
+    items.webApiHost.serverIds = [1];
+    items.webApiHost.serverArr = [];
+
+    expect(collectActivePublishTargets(items, allPending).issues).toContainEqual({
+      key: "webApiHost",
+      reason: "missing-target",
+    });
+  });
+
+  it("WpfClient 只读取旧 serverId，忽略 serverArr 是否为空", () => {
+    const items = makeConfigItems();
+    items.wpfClient.serverArr = [];
+    items.wpfClient.serverId = 19;
+    items.wpfClient.serverName = "旧版 Wpf 服务器";
+
+    expect(collectActivePublishTargets(items, allPending)).toMatchObject({
+      targets: expect.arrayContaining([{ key: "wpfClient", id: 19, name: "旧版 Wpf 服务器" }]),
+      issues: [],
+    });
+  });
+
+  it("WpfClient 旧 serverId 缺失时，即使新数组非空也报告缺少目标", () => {
+    const items = makeConfigItems();
+    items.wpfClient.serverId = null;
+    items.wpfClient.serverArr = [{ id: 9, name: "不参与发布", serverPathArr: [] }];
+
+    expect(collectActivePublishTargets(items, allPending).issues).toContainEqual({
+      key: "wpfClient",
+      reason: "missing-target",
+    });
+  });
+
+  it("WpfClient 的非正安全整数旧 ID 报告非法", () => {
+    const items = makeConfigItems();
+    items.wpfClient.serverId = -1;
+
+    expect(collectActivePublishTargets(items, allPending).issues).toContainEqual({
+      key: "wpfClient",
+      reason: "invalid-id",
+    });
+  });
+
+  it.each(["pending", "failed", "publishing"] as const)("%s 状态仍参与检查", (status) => {
+    const items = makeConfigItems();
+    items.webApiHost.serverArr = [];
+
+    expect(collectActivePublishTargets(items, { ...allPending, webApiHost: status }).issues).toContainEqual({
+      key: "webApiHost",
+      reason: "missing-target",
+    });
+  });
+
+  it("已发布、已移除或 clientPath 为空的模块不参与检查", () => {
+    const items = makeConfigItems();
+    items.webApiHost.serverArr = [];
+    items.webClient.serverArr = [];
+    items.wpfClient.serverId = null;
+    items.spcMonitor.clientPath = "";
+
+    const result = collectActivePublishTargets(items, {
+      ...allPending,
+      webApiHost: "published",
+      webClient: "removed",
+      wpfClient: "published",
+    });
+    expect(result.issues).not.toContainEqual({ key: "webApiHost", reason: "missing-target" });
+    expect(result.issues).not.toContainEqual({ key: "webClient", reason: "missing-target" });
+    expect(result.issues).not.toContainEqual({ key: "wpfClient", reason: "missing-target" });
+    expect(result.issues).not.toContainEqual({ key: "spcMonitor", reason: "missing-target" });
   });
 });
 
