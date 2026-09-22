@@ -17,7 +17,7 @@ import { uploadServerFilesWithRetry } from "@/utils/uploadServerFilesWithRetry";
 import { loadBackupItems, backupRemoteServer } from "@/utils/backupAppconfig";
 import { safeJsonParse } from "@/utils/safeJsonParse";
 import { isTypeActive, APP_TYPE_ORDER } from "@/views/home/publishSections";
-import { type PublishContext } from "./publishFlowSupport";
+import { type PublishContext, type PublishFileSummary, type PublishFileItem } from "./publishFlowSupport";
 import { useProjectDb } from "@/database/project/index";
 import { useServerDb } from "@/database/servers/index";
 import { useTfsDb } from "@/database/teamFoundationServer/index";
@@ -120,6 +120,7 @@ export const oneClickPublishing = async (ctx: PublishContext) => {
 // 项目发布
 export const projectPublish = async (ctx: PublishContext) => {
   if (!ctx.appconfig.id) return false;
+  const publishStartTime = Date.now();
   const serviceNames = APP_TYPE_ORDER.filter(({ key }) =>
     isTypeActive((ctx.appconfig.configItems as any)[key]?.clientPath, ctx.status.map[key])
   ).map(({ pascal }) => pascal);
@@ -135,6 +136,16 @@ export const projectPublish = async (ctx: PublishContext) => {
   try {
     const getAppAssemblysResult = await getApplicationAssemblys(ctx);
     if (!getAppAssemblysResult) return false;
+
+    // 发布前确认（手动/一键链路；定时 ctx 无钩子不弹，无人值守行为不变）
+    if (ctx.confirmBeforeUpload) {
+      const summary = await collectServiceFileSummary(ctx);
+      const confirmed = await ctx.confirmBeforeUpload(summary);
+      if (!confirmed) {
+        ctx.logger.print("已取消发布：已获取的程序集保留，可打开输出目录核对后重试。", "log-warning");
+        return false;
+      }
+    }
 
     // 发布前备份
     if (ctx.appconfig.configItems.isBackup == 1) {
@@ -206,6 +217,12 @@ export const projectPublish = async (ctx: PublishContext) => {
     }
     ctx.status.markPublished("webClient");
     try {
+      // 发布结果摘要：成功/跳过统计 + 耗时（失败路径由既有错误日志覆盖，不输出摘要）
+      const skippedCount = APP_TYPE_ORDER.length - serviceNames.length;
+      ctx.logger.print(
+        `发布完成摘要：成功 ${serviceNames.length} 个服务${skippedCount > 0 ? `（跳过 ${skippedCount} 个）` : ""}，耗时 ${((Date.now() - publishStartTime) / 1000).toFixed(1)}s。`,
+        "log-success"
+      );
       sendNotification({
         title: "发布完成",
         body: "SMOM项目发布完成！"
@@ -651,9 +668,8 @@ export const publishScheduleServer = async (ctx: PublishContext) => {
 // [新]发布[WpfClient]服务
 export const newPublishWpfClient = async (ctx: PublishContext) => {
   const wpfClientItem = ctx.appconfig.configItems.wpfClient;
-  if (!wpfClientItem.clientPath) return true;
-  // 失败续发：已发布的 WpfClient 跳过（拆行保持 clientPath 窄化为 string，与 isTypeActive 语义等价）
-  if (ctx.status.map.wpfClient === "published") return true;
+  // 跳过判断统一走 isTypeActive（clientPath 空 / 已发布 / 已移除均跳过）
+  if (!isTypeActive(wpfClientItem.clientPath, ctx.status.map.wpfClient)) return true;
 
   ctx.logger.print("");
   ctx.logger.print(
@@ -879,9 +895,8 @@ export const newPublishWpfClient = async (ctx: PublishContext) => {
 // 发布[WpfClient]服务
 export const publishWpfClient = async (ctx: PublishContext) => {
   const wpfClientItem = ctx.appconfig.configItems.wpfClient;
-  if (!wpfClientItem.clientPath) return true;
-  // 失败续发：已发布的 WpfClient 跳过（拆行保持 clientPath 窄化为 string，与 isTypeActive 语义等价）
-  if (ctx.status.map.wpfClient === "published") return true;
+  // 跳过判断统一走 isTypeActive（clientPath 空 / 已发布 / 已移除均跳过）
+  if (!isTypeActive(wpfClientItem.clientPath, ctx.status.map.wpfClient)) return true;
 
   ctx.logger.print("");
   ctx.logger.print(
@@ -1640,6 +1655,22 @@ export const getApplicationAssemblys = async (ctx: PublishContext, isOpenDir: bo
 
   ctx.logger.print("获取程序集结束。");
 
+  // 获取结果汇总：各参与服务文件数与修改时间范围（防日期选错）
+  const summary = await collectServiceFileSummary(ctx);
+  if (summary.items.length > 0) {
+    const parts = summary.items.map((i) => `${i.service} ${i.count} 个文件（修改时间 ${i.timeRange}）`);
+    ctx.logger.print(`获取程序集完成：${parts.join("、")}。`, "log-success");
+    const dateRange = getDllModeDateRange(ctx);
+    if (dateRange.length === 2) {
+      for (const item of summary.items) {
+        const latest = item.files.map((f) => f.modifiedTime).filter(Boolean).sort().pop();
+        if (latest && latest < dateRange[0]) {
+          ctx.logger.print(`⚠ ${item.service} 命中文件的最新修改时间（${latest}）早于所选起始日期（${dateRange[0]}），请确认日期范围是否选错！`, "log-warning");
+        }
+      }
+    }
+  }
+
   // DLL名称模式下生成发布日志
   if (ctx.appconfig.dllMode == "DLL名称" && ctx.generatePublishLog.isEnable) {
     const patterns = getDllModePatterns(ctx);
@@ -1659,6 +1690,34 @@ export const getApplicationAssemblys = async (ctx: PublishContext, isOpenDir: bo
   // 打开输出目录
   if (isOpenDir) await cmdInvoke("open_dir", { path: projectOutPath });
   return isSuccess;
+};
+
+// 收集各参与服务输出子目录的文件清单（确认弹窗数据源；目录结构与获取流程一致：{assemblyOutPath}/{Pascal名}）
+export const collectServiceFileSummary = async (ctx: PublishContext): Promise<PublishFileSummary> => {
+  const items: PublishFileItem[] = [];
+  const scanFailed: string[] = [];
+  for (const { key, pascal } of APP_TYPE_ORDER) {
+    if (!isTypeActive((ctx.appconfig.configItems as any)[key]?.clientPath, ctx.status.map[key])) continue;
+    const dirPath = `${removeSlash(ctx.assemblyOutPath)}/${pascal}`;
+    const result = await cmdInvoke("list_files_with_meta", { path: dirPath });
+    if (result.code !== 0 || !Array.isArray(result.data)) {
+      scanFailed.push(pascal);
+      continue;
+    }
+    const files = (result.data as any[]).map((f) => ({
+      name: String(f.name ?? ""),
+      modifiedTime: String(f.modifiedTime ?? ""),
+      size: Number(f.size ?? 0),
+    }));
+    const times = files.map((f) => f.modifiedTime).filter(Boolean).sort();
+    items.push({
+      service: pascal,
+      count: files.length,
+      timeRange: times.length ? `${times[0]} ~ ${times[times.length - 1]}` : "-",
+      files,
+    });
+  }
+  return { items, scanFailed };
 };
 
 // 获取Dll日期范围

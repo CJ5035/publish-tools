@@ -64,7 +64,9 @@ describe("isTypeActive", () => {
     expect(isTypeActive("D:/x", "pending")).toBe(true);
     expect(isTypeActive("D:/x", "publishing")).toBe(true);
     expect(isTypeActive("D:/x", "failed")).toBe(true);
-    expect(isTypeActive("D:/x", "removed")).toBe(true);
+  });
+  it("已移除类型不参与编译/发布（多选移除语义）", () => {
+    expect(isTypeActive("D:/x", "removed")).toBe(false);
   });
 });
 
@@ -123,5 +125,12 @@ describe("filterAppconfigForDialog", () => {
     expect(filtered.configItems.webClient).toBe(appconfig.configItems.webClient);
     expect(filtered.configItems).not.toBe(appconfig.configItems);
     expect(appconfig.configItems.webApiHost.clientPath).toBe("D:/src/WebApiHost/bin"); // 原对象不被篡改
+  });
+  it("removed 类型的 clientPath 同样置空（生成发布文件对话框不出现已移除类型）", () => {
+    const appconfig = { id: 1, configItems: makeConfigItems() } as any;
+    const status: PublishStatusMap = { ...allPending, wpfClient: "removed" };
+    const filtered = filterAppconfigForDialog(appconfig, status);
+    expect(filtered.configItems.wpfClient.clientPath).toBe("");
+    expect(appconfig.configItems.wpfClient.clientPath).toBe("D:/src/WpfClient/bin"); // 原对象不被篡改
   });
 });

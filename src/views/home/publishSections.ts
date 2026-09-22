@@ -19,9 +19,10 @@ export const APP_TYPE_ORDER: ReadonlyArray<{ key: AppTypeKey; pascal: string; cs
 // 展示顺序 = 原模板 5 张表格的出现顺序
 export const APP_TYPE_DISPLAY: ReadonlyArray<AppTypeKey> = ["webApiHost", "webClient", "scheduleServer", "wpfClient", "spcMonitor"];
 
-// 该类型是否参与编译/发布：原 if (!clientPath) 语义 + "已发布跳过"的失败续发语义
-export const isTypeActive = (clientPath: string | null | undefined, status: PublishStatus): boolean =>
-  Boolean(clientPath) && status !== "published";
+// 该类型是否参与编译/发布：原 if (!clientPath) 语义 + "已发布跳过"的失败续发语义 + "已移除跳过"（多选移除）
+// 使用类型谓词将 clientPath 窄化为 string，确保调用处后续 clientPath 类型安全
+export const isTypeActive = (clientPath: string | null | undefined, status: PublishStatus): clientPath is string =>
+  Boolean(clientPath) && status !== "published" && status !== "removed";
 
 export interface AppSectionPath {
   identity: string;
@@ -130,12 +131,12 @@ export function buildAppSections(configItems: ConfigItemsType, status: PublishSt
   return sections;
 }
 
-// 生成发布文件对话框的过滤副本：published 类型的 clientPath 置空（对话框按 clientPath 控制显隐，见其模板 44/73/104/133/162 行）
-// 浅拷贝仅对 published 类型新建子对象，未发布类型保持引用共享（保留原 Object.assign 的共享突变语义）
+// 生成发布文件对话框的过滤副本：published / removed 类型的 clientPath 置空（对话框按 clientPath 控制显隐，见其模板 44/73/104/133/162 行）
+// 浅拷贝仅对这两种状态新建子对象，其余类型保持引用共享（保留原 Object.assign 的共享突变语义）
 export function filterAppconfigForDialog(appconfig: RowAppconfigType, status: PublishStatusMap): RowAppconfigType {
   const configItems = { ...(appconfig.configItems as any) };
   for (const { key } of APP_TYPE_ORDER) {
-    if (status[key] === "published" && configItems[key]) {
+    if ((status[key] === "published" || status[key] === "removed") && configItems[key]) {
       configItems[key] = { ...configItems[key], clientPath: "" };
     }
   }

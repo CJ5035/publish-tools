@@ -542,6 +542,7 @@ import { useServerDb } from "@/database/servers/index";
 import { useTfsDb } from "@/database/teamFoundationServer/index";
 import { useGitDb } from "@/database/git/index";
 import { formatDate, DEFAULT_DATE_TIME_START, DEFAULT_DATE_TIME_END } from "@/utils/formatTime";
+import { serializeDllModeDateRange } from "@/utils/dllModeValue";
 import { getDefaultSubObject, removeSlash } from "@/utils/other";
 
 // 定义子组件向父组件传值/事件
@@ -1115,13 +1116,7 @@ const onCompressFileChange = async (val: string[]) => {
 
 // 选择日期范围切换
 const onDllModeDateChange = async (val: Date[]) => {
-  if (!val || val.length === 0) {
-    state.ruleForm.dllModeValue = "";
-    return;
-  }
-  let startDate = formatDate(val[0], "YYYY-mm-dd HH:MM:SS");
-  let endDate = formatDate(val[1], "YYYY-mm-dd HH:MM:SS");
-  state.ruleForm.dllModeValue = JSON.stringify([startDate, endDate]);
+  state.ruleForm.dllModeValue = serializeDllModeDateRange(val);
 };
 
 // 选择TFS切换
